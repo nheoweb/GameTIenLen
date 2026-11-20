@@ -240,7 +240,7 @@ $tlmn_root_class    = $tlmn_is_fullscreen ? 'tlmn-root tlmn-fullscreen-mode' : '
 
 					<!-- Dãy nút Cà khịa nhanh (1-click gửi & phát giọng nói Miền Nam) -->
 					<div id="quickVoiceBar" class="quick-voice-bar" aria-label="Câu nói cà khịa nhanh">
-						<button type="button" class="btn-quick-voice" data-text="🍋 Mày hả bưởi! Đè lại liền nè con!" data-voice="Mầy hả bưởi! Đè lại liền nè con!" data-clip="counter_1.mp3">🍋 Mày hả bưởi!</button>
+						<button type="button" class="btn-quick-voice" data-text="🍋 Mày hả bưởi! Đè lại liền nèèè!" data-voice="Mầy hả bưởi! Đè lại liền nè!" data-clip="counter_1.mp3">🍋 Mày hả bưởi!</button>
 						<button type="button" class="btn-quick-voice" data-text="⚡ Này thì! Tới công chuyện luôn nè!" data-voice="Này thì! Cướp cái là tới công chuyện luôn nè!" data-clip="followup_1.mp3">⚡ Này thì!</button>
 						<button type="button" class="btn-quick-voice" data-text="🐷 Đừng có giỡn mặt với tui nghen!" data-voice="Đừng có giỡn mặt với tui nghen!" data-clip="quick_warn.mp3">🐷 Đừng giỡn mặt!</button>
 						<button type="button" class="btn-quick-voice" data-text="⏳ Đánh lẹ đi bồ ơi, ngủ gục tới nơi rồi nè!" data-voice="Đánh lẹ đi bồ ơi, ngủ gục tới nơi rồi nè!" data-clip="quick_hurry.mp3">⏳ Đánh lẹ bồ ơi!</button>

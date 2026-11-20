@@ -1134,8 +1134,8 @@ class TLMN_Room_Manager {
 				array(
 					'kind'        => 'COUNTER_3X',
 					'audioClip'   => 'counter_1.mp3',
-					'voiceText'   => 'Mầy hả bưởi! Đè lại liền nè con!',
-					'displayText' => '🍋 Mày hả bưởi! Đè lại liền nè con!',
+					'voiceText'   => 'Mầy hả bưởi! Đè lại liền nè!',
+					'displayText' => '🍋 Mày hả bưởi! Đè lại liền nèèè!',
 				),
 				array(
 					'kind'        => 'COUNTER_3X',
