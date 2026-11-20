@@ -101,6 +101,9 @@ class TLMN_Room_Manager {
 			'rankings'               => array(),
 			'finishCounter'          => 0,
 			'logs'                   => array( '🎉 ' . $clean_name . ' đã tạo phòng #' . $room_id ),
+			'chats'                  => array(),
+			'trickPlayers'           => array(),
+			'pendingFollowUpToken'   => null,
 			'events'                 => array(),
 			'nextEventId'            => 1,
 			'lastNudgeAt'            => 0,
@@ -530,6 +533,8 @@ class TLMN_Room_Manager {
 		$room['roundNumber']            = (int) $room['roundNumber'] + 1;
 		$room['currentTrick']           = null;
 		$room['tableHistory']           = array();
+		$room['trickPlayers']           = array();
+		$room['pendingFollowUpToken']   = null;
 		$room['rankings']               = array();
 		$room['finishCounter']          = 0;
 
@@ -693,6 +698,46 @@ class TLMN_Room_Manager {
 		$is_chop   = ! empty( $beat_check['isChop'] );
 		$chop_note = isset( $beat_check['chopNote'] ) ? $beat_check['chopNote'] : null;
 
+		// Theo dõi chuỗi đánh bài để kích hoạt câu nói cà khịa (Voice Banter):
+		// 1) A đánh -> B đè -> A bỏ qua -> B đánh tiếp ("Này thì!")
+		$is_follow_up_strike = (
+			empty( $prev_hand ) &&
+			! empty( $room['pendingFollowUpToken'] ) &&
+			$room['pendingFollowUpToken'] === $player_token
+		);
+		$room['pendingFollowUpToken'] = null;
+
+		// 2) A đánh 1 lần -> B đánh đè 1 lần -> A đáp trả đè lại B ("Mày hả bưởi!")
+		if ( ! isset( $room['trickPlayers'] ) || ! is_array( $room['trickPlayers'] ) ) {
+			$room['trickPlayers'] = array();
+		}
+		$room['trickPlayers'][] = $player_token;
+		$tp_count               = count( $room['trickPlayers'] );
+		$is_counter_3x          = (
+			$tp_count >= 3 &&
+			$room['trickPlayers'][ $tp_count - 3 ] === $player_token &&
+			$room['trickPlayers'][ $tp_count - 2 ] !== $player_token
+		);
+
+		$player_finished = false;
+		if ( empty( $room['players'][ $player_idx ]['hand'] ) && null === $room['players'][ $player_idx ]['finishOrder'] ) {
+			$room['finishCounter']                         = (int) $room['finishCounter'] + 1;
+			$room['players'][ $player_idx ]['finishOrder'] = $room['finishCounter'];
+			$player_finished                               = true;
+		}
+
+		$remaining_count = count( $room['players'][ $player_idx ]['hand'] );
+		$finish_order    = $room['players'][ $player_idx ]['finishOrder'];
+		$banter          = self::pick_play_banter(
+			$is_chop,
+			$is_counter_3x,
+			$is_follow_up_strike,
+			$player_finished,
+			$finish_order,
+			$remaining_count,
+			$classified
+		);
+
 		$trick_entry = array(
 			'playerToken'    => $player_token,
 			'nickname'       => $nickname,
@@ -701,6 +746,7 @@ class TLMN_Room_Manager {
 			'label'          => $classified['label'],
 			'isChop'         => $is_chop,
 			'chopNote'       => $chop_note,
+			'banter'         => $banter,
 		);
 
 		$room['currentTrick']   = $trick_entry;
@@ -714,8 +760,12 @@ class TLMN_Room_Manager {
 			self::push_event(
 				$room,
 				array(
-					'type'    => 'CHOP',
-					'message' => $chop_note,
+					'type'        => 'CHOP',
+					'playerToken' => $player_token,
+					'nickname'    => $nickname,
+					'cardCount'   => count( $classified['cards'] ),
+					'message'     => $chop_note,
+					'banter'      => $banter,
 				)
 			);
 		} else {
@@ -723,16 +773,20 @@ class TLMN_Room_Manager {
 			self::push_event(
 				$room,
 				array(
-					'type' => 'CARD_PLAYED',
+					'type'        => 'CARD_PLAYED',
+					'playerToken' => $player_token,
+					'nickname'    => $nickname,
+					'cardCount'   => count( $classified['cards'] ),
+					'banter'      => $banter,
 				)
 			);
 		}
 
-		$player_finished = false;
-		if ( empty( $room['players'][ $player_idx ]['hand'] ) && null === $room['players'][ $player_idx ]['finishOrder'] ) {
-			$room['finishCounter']                         = (int) $room['finishCounter'] + 1;
-			$room['players'][ $player_idx ]['finishOrder'] = $room['finishCounter'];
-			$player_finished                               = true;
+		if ( null !== $banter ) {
+			self::add_log( $room, '🗣️ ' . $nickname . ': "' . $banter['displayText'] . '"' );
+		}
+
+		if ( $player_finished ) {
 			self::add_log( $room, '🏆 ' . $nickname . ' đã hết bài (Về thứ ' . $room['finishCounter'] . ')!' );
 		}
 
@@ -844,6 +898,12 @@ class TLMN_Room_Manager {
 			if ( $trick_owner_idx >= 0 && ! empty( $room['players'][ $trick_owner_idx ]['hand'] ) ) {
 				$owner_with_cards = $room['players'][ $trick_owner_idx ];
 			}
+			// Nếu trong vòng này đã có ít nhất 2 lượt đánh (A đánh -> B đè) rồi A bỏ qua -> đánh dấu để khi B đánh tiếp sẽ nổ câu "Này thì!"
+			if ( null !== $owner_with_cards && ! empty( $room['trickPlayers'] ) && count( $room['trickPlayers'] ) >= 2 ) {
+				$room['pendingFollowUpToken'] = $owner_with_cards['playerToken'];
+			} else {
+				$room['pendingFollowUpToken'] = null;
+			}
 			self::reset_trick_for_new_round(
 				$room,
 				$trick_owner_idx >= 0 ? $trick_owner_idx : $player_idx,
@@ -941,6 +1001,208 @@ class TLMN_Room_Manager {
 			'ok'    => true,
 			'event' => $event,
 		);
+	}
+
+	/**
+	 * Gửi tin nhắn chat / icon cảm xúc / câu cà khịa nhanh trong phòng.
+	 *
+	 * @param array<string, mixed> $room         Trạng thái phòng.
+	 * @param string               $player_token Token người gửi.
+	 * @param string               $message      Nội dung tin nhắn.
+	 * @param string               $voice_text   Câu thoại phát âm thanh (nếu chọn câu cà khịa nhanh).
+	 * @return array<string, mixed>
+	 */
+	public static function add_chat_message( array &$room, $player_token, $message, $voice_text = '', $audio_clip = '' ) {
+		$now         = time();
+		$sender_name = '';
+
+		foreach ( $room['players'] as &$p ) {
+			if ( $p['playerToken'] === $player_token ) {
+				$sender_name     = $p['nickname'];
+				$p['lastSeenAt'] = $now;
+				break;
+			}
+		}
+		unset( $p );
+
+		if ( '' === $sender_name ) {
+			foreach ( $room['spectators'] as &$s ) {
+				if ( $s['playerToken'] === $player_token ) {
+					$sender_name     = $s['nickname'];
+					$s['lastSeenAt'] = $now;
+					break;
+				}
+			}
+			unset( $s );
+		}
+
+		if ( '' === $sender_name ) {
+			return array(
+				'ok'    => false,
+				'error' => 'Bạn cần ở trong bàn để gửi tin nhắn chat',
+			);
+		}
+
+		$clean_text  = self::sanitize_label( $message, 120, '' );
+		$clean_voice = self::sanitize_label( $voice_text, 80, '' );
+		$clean_clip  = preg_replace( '/[^a-zA-Z0-9_.-]/', '', (string) $audio_clip );
+		if ( '' === $clean_text ) {
+			return array(
+				'ok'    => false,
+				'error' => 'Vui lòng nhập nội dung tin nhắn',
+			);
+		}
+
+		if ( ! isset( $room['chats'] ) || ! is_array( $room['chats'] ) ) {
+			$room['chats'] = array();
+		}
+
+		$chat_id    = isset( $room['nextEventId'] ) ? (int) $room['nextEventId'] : $now;
+		$chat_entry = array(
+			'id'          => $chat_id,
+			'playerToken' => $player_token,
+			'nickname'    => $sender_name,
+			'text'        => $clean_text,
+			'voiceText'   => $clean_voice,
+			'audioClip'   => $clean_clip,
+			'timeLabel'   => gmdate( 'H:i', $now + 7 * 3600 ),
+		);
+
+		$room['chats'][] = $chat_entry;
+		if ( count( $room['chats'] ) > 35 ) {
+			$room['chats'] = array_values( array_slice( $room['chats'], -35 ) );
+		}
+
+		self::push_event(
+			$room,
+			array(
+				'type' => 'CHAT_MESSAGE',
+				'chat' => $chat_entry,
+			)
+		);
+		self::bump_version( $room );
+
+		return array(
+			'ok'   => true,
+			'chat' => $chat_entry,
+		);
+	}
+
+	/**
+	 * Chọn câu nói cà khịa / hiệu ứng giọng nói Miền Nam vui nhộn theo ngữ cảnh bàn bài.
+	 *
+	 * @param bool                 $is_chop             Có phải chặt Heo/Hàng không.
+	 * @param bool                 $is_counter_3x       Có phải A -> B -> A ăn miếng trả miếng 3 nhịp không.
+	 * @param bool                 $is_follow_up_strike Có phải A đánh -> B đè -> A bỏ qua -> B đánh tiếp không.
+	 * @param bool                 $player_finished     Người đánh vừa hết bài.
+	 * @param int|null             $finish_order        Thứ hạng vừa về.
+	 * @param int                  $remaining_count     Số lá bài còn lại trên tay.
+	 * @param array<string, mixed> $classified          Bộ bài vừa đánh.
+	 * @return array<string, string>|null
+	 */
+	private static function pick_play_banter(
+		$is_chop,
+		$is_counter_3x,
+		$is_follow_up_strike,
+		$player_finished,
+		$finish_order,
+		$remaining_count,
+		array $classified
+	) {
+		// 1. Chặt Heo / Đôi Heo / Đè Hàng (Giọng Miền Nam).
+		if ( $is_chop ) {
+			$lines = array(
+				array(
+					'kind'        => 'CHOP_PIG',
+					'audioClip'   => 'chop_1.mp3',
+					'voiceText'   => 'Chặt heo đẹp nè, rụng nụ luôn nghen bưởi!',
+					'displayText' => '💥 Chặt Heo đẹp nè! Rụng nụ luôn nghen bưởi!',
+				),
+				array(
+					'kind'        => 'CHOP_PIG',
+					'audioClip'   => 'chop_2.mp3',
+					'voiceText'   => 'Chặt đẹp nè! Cháy túi rồi bưởi ơi!',
+					'displayText' => '🔥 Chặt đẹp nè! Cháy túi rồi bưởi ơi!',
+				),
+			);
+			return $lines[ random_int( 0, count( $lines ) - 1 ) ];
+		}
+
+		// 2. A đánh -> B đè -> A đè ngược lại B (3 lần ăn miếng trả miếng liên tiếp).
+		if ( $is_counter_3x ) {
+			$lines = array(
+				array(
+					'kind'        => 'COUNTER_3X',
+					'audioClip'   => 'counter_1.mp3',
+					'voiceText'   => 'Mầy hả bưởi! Đè lại liền nè con!',
+					'displayText' => '🍋 Mày hả bưởi! Đè lại liền nè con!',
+				),
+				array(
+					'kind'        => 'COUNTER_3X',
+					'audioClip'   => 'counter_2.mp3',
+					'voiceText'   => 'Đỡ giùm cái coi! Mầy hả bưởi!',
+					'displayText' => '🔥 Đỡ giùm cái coi! Mày hả bưởi!',
+				),
+				array(
+					'kind'        => 'COUNTER_3X',
+					'audioClip'   => 'counter_3.mp3',
+					'voiceText'   => 'Chạy đâu cho thoát hả bưởi!',
+					'displayText' => '😏 Chạy đâu cho thoát hả bưởi!',
+				),
+			);
+			return $lines[ random_int( 0, count( $lines ) - 1 ) ];
+		}
+
+		// 3. A đánh -> B đè -> A bỏ qua -> B đánh tiếp ("Này thì!").
+		if ( $is_follow_up_strike ) {
+			$lines = array(
+				array(
+					'kind'        => 'FOLLOW_UP_STRIKE',
+					'audioClip'   => 'followup_1.mp3',
+					'voiceText'   => 'Này thì! Cướp cái là tới công chuyện luôn nè!',
+					'displayText' => '⚡ Này thì! Cướp cái là tới công chuyện luôn nè!',
+				),
+				array(
+					'kind'        => 'FOLLOW_UP_STRIKE',
+					'audioClip'   => 'followup_2.mp3',
+					'voiceText'   => 'Này thì! Nhường là tui hốt luôn đó nghen!',
+					'displayText' => '😎 Này thì! Nhường là tui hốt luôn đó nghen!',
+				),
+			);
+			return $lines[ random_int( 0, count( $lines ) - 1 ) ];
+		}
+
+		// 4. Về Nhất (Hết bài đầu tiên).
+		if ( $player_finished && 1 === (int) $finish_order ) {
+			return array(
+				'kind'        => 'WIN_FIRST',
+				'audioClip'   => 'win_1.mp3',
+				'voiceText'   => 'Về nhất rồi nghen! Xin nhẹ cái top một!',
+				'displayText' => '🏆 Về nhất rồi nghen! Xin nhẹ cái Top 1!',
+			);
+		}
+
+		// 5. Báo cháy: chỉ còn đúng 1 lá bài trên tay.
+		if ( 1 === (int) $remaining_count ) {
+			return array(
+				'kind'        => 'LAST_CARD',
+				'audioClip'   => 'lastcard_1.mp3',
+				'voiceText'   => 'Báo cháy nghen! Còn đúng một lá thôi đó!',
+				'displayText' => '🚨 Báo cháy nghen! Còn đúng 1 lá thôi đó!',
+			);
+		}
+
+		// 6. Ra Heo hoặc Đôi Heo dọa làng.
+		if ( isset( $classified['highCard']['rankValue'] ) && 12 === (int) $classified['highCard']['rankValue'] ) {
+			return array(
+				'kind'        => 'PIG_PLAYED',
+				'audioClip'   => 'pig_1.mp3',
+				'voiceText'   => 'Heo xuất chuồng nè bà con! Ai có hàng thì nhào vô!',
+				'displayText' => '🐷 Heo xuất chuồng nè bà con! Ai có hàng thì nhào vô!',
+			);
+		}
+
+		return null;
 	}
 
 	/**
@@ -1167,6 +1429,7 @@ class TLMN_Room_Manager {
 			'tableHistory'           => array_values( $room['tableHistory'] ),
 			'rankings'               => array_values( $room['rankings'] ),
 			'logs'                   => array_values( array_slice( $room['logs'], -15 ) ),
+			'chats'                  => isset( $room['chats'] ) && is_array( $room['chats'] ) ? array_values( array_slice( $room['chats'], -35 ) ) : array(),
 			'readiness'              => $readiness,
 			'myRole'                 => null !== $me ? 'PLAYER' : ( $is_spec ? 'SPECTATOR' : 'VISITOR' ),
 			'myHand'                 => null !== $me ? array_values( $me['hand'] ) : array(),
@@ -1241,6 +1504,7 @@ class TLMN_Room_Manager {
 	private static function reset_trick_for_new_round( array &$room, $owner_seat_idx, $owner_with_cards = null ) {
 		$room['currentTrick'] = null;
 		$room['tableHistory'] = array();
+		$room['trickPlayers'] = array();
 		foreach ( $room['players'] as &$p ) {
 			$p['passedInRound'] = false;
 		}

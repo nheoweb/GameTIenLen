@@ -118,6 +118,16 @@ class TLMN_Rest_Api {
 				'permission_callback' => '__return_true',
 			)
 		);
+
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/rooms/(?P<room_id>\d{4})/chat',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( __CLASS__, 'handle_chat' ),
+				'permission_callback' => '__return_true',
+			)
+		);
 	}
 
 	/**
@@ -601,6 +611,46 @@ class TLMN_Rest_Api {
 				}
 
 				$res = TLMN_Room_Manager::pass_turn( $room, $player_token );
+				if ( empty( $res['ok'] ) ) {
+					return $res;
+				}
+
+				TLMN_Storage::save_room( $room );
+				$res['state'] = TLMN_Room_Manager::build_client_state( $room, $player_token, $since_ev );
+				return $res;
+			}
+		);
+
+		return self::json_response( $result );
+	}
+
+	/**
+	 * POST /rooms/{room_id}/chat — Gửi tin nhắn chat / icon cảm xúc / cà khịa nhanh.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public static function handle_chat( WP_REST_Request $request ) {
+		$room_id      = (string) $request->get_param( 'room_id' );
+		$payload      = self::get_payload( $request );
+		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
+		$message      = isset( $payload['message'] ) ? (string) $payload['message'] : '';
+		$voice_text   = isset( $payload['voiceText'] ) ? (string) $payload['voiceText'] : '';
+		$audio_clip   = isset( $payload['audioClip'] ) ? (string) $payload['audioClip'] : '';
+		$since_ev     = isset( $payload['sinceEventId'] ) ? (int) $payload['sinceEventId'] : 0;
+
+		$result = TLMN_Storage::with_room_lock(
+			$room_id,
+			function () use ( $room_id, $player_token, $message, $voice_text, $audio_clip, $since_ev ) {
+				$room = TLMN_Storage::get_room( $room_id );
+				if ( ! $room ) {
+					return array(
+						'ok'    => false,
+						'error' => 'Không tìm thấy phòng',
+					);
+				}
+
+				$res = TLMN_Room_Manager::add_chat_message( $room, $player_token, $message, $voice_text, $audio_clip );
 				if ( empty( $res['ok'] ) ) {
 					return $res;
 				}

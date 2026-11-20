@@ -130,6 +130,7 @@ class TLMN_Plugin {
 		return array(
 			'restBase'    => esc_url_raw( rest_url( TLMN_Rest_Api::API_NAMESPACE ) ),
 			'homeUrl'     => esc_url_raw( home_url( '/' ) ),
+			'audioBase'   => esc_url_raw( TLMN_PLUGIN_URL . 'assets/audio/' ),
 			'wpUserName'  => $wp_user_name,
 			'pollRoomMs'  => 900,
 			'pollLobbyMs' => 2500,

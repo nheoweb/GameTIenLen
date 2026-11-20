@@ -51,6 +51,10 @@
   let pollGeneration = 0;
   let hbCounter = 0;
   let isActionBusy = false;
+  let isChatBusy = false;
+  let banterTimeout = null;
+  let lastRenderedChatId = -1;
+  const seatBubbles = {}; // playerToken -> { text, expiresAt }
 
   // DOM Elements (scoped trong root)
   const $ = (id) => document.getElementById(id);
@@ -108,6 +112,12 @@
 
   const roomLogList = $('roomLogList');
   const spectatorBadge = $('spectatorBadge');
+  const banterCalloutBox = $('banterCalloutBox');
+  const chatMessagesList = $('chatMessagesList');
+  const quickVoiceBar = $('quickVoiceBar');
+  const emojiPickerBar = $('emojiPickerBar');
+  const inputChatMessage = $('inputChatMessage');
+  const btnSendChat = $('btnSendChat');
 
   // Helper xây dựng URL REST API chuẩn cho cả Pretty Permalink và ?rest_route=
   function buildApiUrl(path, queryParams) {
@@ -264,6 +274,37 @@
     alertTimeout = setTimeout(() => {
       alertBanner.classList.add('hidden');
     }, ms);
+  }
+
+  function showBanterCallout(speakerName, text, durationMs) {
+    if (!banterCalloutBox) return;
+    const ms = durationMs || 4200;
+    banterCalloutBox.textContent = (speakerName ? speakerName + ': ' : '') + text;
+    banterCalloutBox.classList.remove('hidden');
+    if (banterTimeout) clearTimeout(banterTimeout);
+    banterTimeout = setTimeout(() => {
+      banterCalloutBox.classList.add('hidden');
+    }, ms);
+  }
+
+  function setSeatBubble(pToken, text, durationMs) {
+    if (!pToken || !text) return;
+    const ms = durationMs || 4500;
+    seatBubbles[pToken] = {
+      text: text,
+      expiresAt: Date.now() + ms,
+    };
+    if (currentRoomState) {
+      renderFourSeats(currentRoomState);
+    }
+    setTimeout(() => {
+      if (seatBubbles[pToken] && Date.now() >= seatBubbles[pToken].expiresAt) {
+        delete seatBubbles[pToken];
+        if (currentRoomState) {
+          renderFourSeats(currentRoomState);
+        }
+      }
+    }, ms + 60);
   }
 
   // ==================== SMART POLLING ====================
@@ -647,6 +688,80 @@
     }
   });
 
+  // ==================== CHAT & EMOJI & QUICK VOICE ====================
+
+  async function sendChatMessage(messageText, voiceText, audioClip) {
+    if (!currentRoomId || isChatBusy) return;
+    const cleanText = String(messageText || '').trim();
+    if (!cleanText) return;
+    if (soundManager) soundManager.unlockAudio();
+
+    isChatBusy = true;
+    if (btnSendChat) btnSendChat.disabled = true;
+
+    try {
+      const res = await apiPost('/rooms/' + currentRoomId + '/chat', {
+        playerToken: playerToken,
+        message: cleanText,
+        voiceText: voiceText || '',
+        audioClip: audioClip || '',
+        sinceEventId: lastSeenEventId,
+      });
+      if (!res || !res.ok) {
+        showAlertBanner('⚠️ ' + ((res && res.error) || 'Không thể gửi tin nhắn'));
+        return;
+      }
+      if (inputChatMessage && !voiceText && !audioClip) {
+        inputChatMessage.value = '';
+      }
+      if (res.state) {
+        applyRoomState(res.state, true);
+      }
+    } catch (e) {
+      showAlertBanner('❌ Lỗi mạng khi gửi tin nhắn chat.');
+    } finally {
+      isChatBusy = false;
+      if (btnSendChat) btnSendChat.disabled = false;
+    }
+  }
+
+  if (btnSendChat && inputChatMessage) {
+    btnSendChat.addEventListener('click', () => {
+      sendChatMessage(inputChatMessage.value, '', '');
+    });
+
+    inputChatMessage.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendChatMessage(inputChatMessage.value, '', '');
+      }
+    });
+  }
+
+  if (emojiPickerBar && inputChatMessage) {
+    emojiPickerBar.querySelectorAll('.btn-emoji').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const emoji = btn.getAttribute('data-emoji') || '';
+        if (!emoji) return;
+        if (soundManager) soundManager.unlockAudio();
+        inputChatMessage.value = (inputChatMessage.value + emoji).slice(0, 120);
+        inputChatMessage.focus();
+      });
+    });
+  }
+
+  if (quickVoiceBar) {
+    quickVoiceBar.querySelectorAll('.btn-quick-voice').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const text = btn.getAttribute('data-text') || '';
+        const voice = btn.getAttribute('data-voice') || '';
+        const clip = btn.getAttribute('data-clip') || '';
+        if (!text) return;
+        sendChatMessage(text, voice, clip);
+      });
+    });
+  }
+
   // ==================== STATE & ALERTS ====================
 
   function applyRoomState(state, processEvents) {
@@ -735,12 +850,40 @@
         break;
 
       case 'CARD_PLAYED':
-        if (soundManager) soundManager.playCardSound();
+        if (soundManager) soundManager.playCardSound(alert.cardCount || 1);
+        if (alert.banter) {
+          if (soundManager) {
+            soundManager.speakBanter(alert.banter.voiceText, alert.banter.kind, alert.banter.audioClip);
+          }
+          showBanterCallout(alert.nickname, alert.banter.displayText, 4200);
+          setSeatBubble(alert.playerToken, alert.banter.displayText, 4500);
+        }
         break;
 
       case 'CHOP':
         if (soundManager) soundManager.playChopSound();
         showAlertBanner(alert.message, 5500);
+        if (alert.banter) {
+          if (soundManager) {
+            soundManager.speakBanter(alert.banter.voiceText, alert.banter.kind, alert.banter.audioClip);
+          }
+          showBanterCallout(alert.nickname, alert.banter.displayText, 4600);
+          setSeatBubble(alert.playerToken, alert.banter.displayText, 4600);
+        }
+        break;
+
+      case 'CHAT_MESSAGE':
+        if (alert.chat) {
+          if (alert.chat.audioClip || alert.chat.voiceText) {
+            if (soundManager) {
+              soundManager.speakBanter(alert.chat.voiceText, 'COUNTER_3X', alert.chat.audioClip);
+            }
+            showBanterCallout(alert.chat.nickname, alert.chat.text, 4200);
+          } else if (soundManager) {
+            soundManager.playChatSound();
+          }
+          setSeatBubble(alert.chat.playerToken, alert.chat.text, 4800);
+        }
         break;
 
       case 'PASS':
@@ -836,12 +979,48 @@
     }
 
     renderMyHand();
+    renderChatMessages(state.chats || []);
 
     roomLogList.innerHTML = (state.logs || [])
       .slice()
       .reverse()
       .map((line) => '<div>' + escapeHtml(line) + '</div>')
       .join('');
+  }
+
+  function renderChatMessages(chats) {
+    if (!chatMessagesList) return;
+    if (!Array.isArray(chats) || chats.length === 0) {
+      if (lastRenderedChatId !== 0) {
+        lastRenderedChatId = 0;
+        chatMessagesList.innerHTML =
+          '<div class="chat-empty-hint">Chưa có tin nhắn nào. Hãy chọn icon hoặc bấm câu cà khịa để phát tiếng nói!</div>';
+      }
+      return;
+    }
+
+    const latestId = Number(chats[chats.length - 1].id) || chats.length;
+    if (latestId === lastRenderedChatId) {
+      return;
+    }
+    lastRenderedChatId = latestId;
+
+    chatMessagesList.innerHTML = chats
+      .map((c) => {
+        const isMe = c.playerToken === playerToken;
+        return (
+          '<div class="chat-msg-row">' +
+          '<span class="chat-msg-author ' + (isMe ? 'is-me' : '') + '">' +
+          escapeHtml(c.nickname) + (isMe ? ' (Bạn)' : '') + ':' +
+          '</span>' +
+          '<span class="chat-msg-text">' + escapeHtml(c.text) + '</span>' +
+          (c.timeLabel ? '<span class="chat-msg-time">' + escapeHtml(c.timeLabel) + '</span>' : '') +
+          '</div>'
+        );
+      })
+      .join('');
+
+    chatMessagesList.scrollTop = chatMessagesList.scrollHeight;
   }
 
   function renderFourSeats(state) {
@@ -898,8 +1077,14 @@
       statusPill = '<span class="status-pill pill-ready">🂠 Còn ' + player.cardCount + ' lá</span>';
     }
 
+    const activeBubble =
+      seatBubbles[player.playerToken] && Date.now() < seatBubbles[player.playerToken].expiresAt
+        ? '<div class="seat-chat-bubble">' + escapeHtml(seatBubbles[player.playerToken].text) + '</div>'
+        : '';
+
     return (
       '<div class="seat-card ' + (isTurn ? 'active-turn' : '') + '">' +
+      activeBubble +
       '<div class="seat-header-line">' +
       '<span>' + (player.isHost ? '👑 ' : '') + escapeHtml(player.nickname) + (isMe ? ' (Bạn)' : '') + '</span>' +
       '<span title="' + (player.online ? 'Đang trực tuyến' : 'Tạm mất kết nối') + '">' + (player.online ? '🟢' : '🔴') + '</span>' +
