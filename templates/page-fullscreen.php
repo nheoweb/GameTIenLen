@@ -31,7 +31,11 @@ $tlmn_app_ver   = TLMN_Plugin::get_asset_version( 'assets/js/app.js' );
 <head>
 	<meta charset="<?php bloginfo( 'charset' ); ?>" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title><?php echo esc_html( get_the_title() ? get_the_title() . ' — ' . get_bloginfo( 'name' ) : 'Tiến Lên Miền Nam — Chơi Nội Bộ Online' ); ?></title>
+	<title>Phòng RD - Tiến Lên Miền Nam</title>
+	<meta property="og:type" content="website" />
+	<meta property="og:title" content="Phòng RD - Tiến Lên Miền Nam" />
+	<meta property="og:description" content="Sảnh chơi Tiến Lên Miền Nam nội bộ Phòng RD (2 – 4 người)" />
+	<meta name="description" content="Sảnh chơi Tiến Lên Miền Nam nội bộ Phòng RD (2 – 4 người)" />
 	<link rel="stylesheet" href="<?php echo esc_url( TLMN_PLUGIN_URL . 'assets/css/tien-len.css?ver=' . rawurlencode( $tlmn_css_ver ) ); ?>" />
 </head>
 <body class="tlmn-fullscreen-page">
