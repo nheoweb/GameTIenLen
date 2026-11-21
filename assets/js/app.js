@@ -54,6 +54,7 @@
   let isChatBusy = false;
   let banterTimeout = null;
   let lastRenderedChatId = -1;
+  let lastLocalChatSoundAt = 0;
   const seatBubbles = {}; // playerToken -> { text, expiresAt }
 
   // DOM Elements (scoped trong root)
@@ -691,10 +692,31 @@
   // ==================== CHAT & EMOJI & QUICK VOICE ====================
 
   async function sendChatMessage(messageText, voiceText, audioClip) {
-    if (!currentRoomId || isChatBusy) return;
     const cleanText = String(messageText || '').trim();
     if (!cleanText) return;
-    if (soundManager) soundManager.unlockAudio();
+
+    // Phát âm thanh NGAY LẬP TỨC trong sự kiện chạm (synchronous user gesture) để mobile không bị chặn Autoplay
+    if (soundManager) {
+      soundManager.unlockAudio();
+      lastLocalChatSoundAt = Date.now();
+      if (audioClip || voiceText) {
+        soundManager.speakBanter(voiceText, 'COUNTER_3X', audioClip);
+      } else {
+        soundManager.playChatSound();
+      }
+    }
+
+    // Hiển thị bong bóng tức thì cho người bấm
+    if (currentRoomState) {
+      const me = (currentRoomState.players || []).find((p) => p.playerToken === playerToken);
+      const myName = (me && me.nickname) || getNickname();
+      if (audioClip || voiceText) {
+        showBanterCallout(myName, cleanText, 4200);
+      }
+      setSeatBubble(playerToken, cleanText, 4800);
+    }
+
+    if (!currentRoomId || isChatBusy) return;
 
     isChatBusy = true;
     if (btnSendChat) btnSendChat.disabled = true;
@@ -739,26 +761,31 @@
   }
 
   if (emojiPickerBar && inputChatMessage) {
-    emojiPickerBar.querySelectorAll('.btn-emoji').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const emoji = btn.getAttribute('data-emoji') || '';
-        if (!emoji) return;
-        if (soundManager) soundManager.unlockAudio();
-        inputChatMessage.value = (inputChatMessage.value + emoji).slice(0, 120);
+    emojiPickerBar.addEventListener('click', (e) => {
+      const btn = e.target && typeof e.target.closest === 'function' ? e.target.closest('.btn-emoji') : null;
+      if (!btn) return;
+      const emoji = btn.getAttribute('data-emoji') || '';
+      if (!emoji) return;
+      if (soundManager) {
+        soundManager.unlockAudio();
+        soundManager.playChatSound();
+      }
+      inputChatMessage.value = (inputChatMessage.value + emoji).slice(0, 120);
+      if (window.innerWidth > 768) {
         inputChatMessage.focus();
-      });
+      }
     });
   }
 
   if (quickVoiceBar) {
-    quickVoiceBar.querySelectorAll('.btn-quick-voice').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const text = btn.getAttribute('data-text') || '';
-        const voice = btn.getAttribute('data-voice') || '';
-        const clip = btn.getAttribute('data-clip') || '';
-        if (!text) return;
-        sendChatMessage(text, voice, clip);
-      });
+    quickVoiceBar.addEventListener('click', (e) => {
+      const btn = e.target && typeof e.target.closest === 'function' ? e.target.closest('.btn-quick-voice') : null;
+      if (!btn) return;
+      const text = btn.getAttribute('data-text') || '';
+      const voice = btn.getAttribute('data-voice') || '';
+      const clip = btn.getAttribute('data-clip') || '';
+      if (!text) return;
+      sendChatMessage(text, voice, clip);
     });
   }
 
@@ -874,12 +901,14 @@
 
       case 'CHAT_MESSAGE':
         if (alert.chat) {
+          const isOwnRecentChat =
+            alert.chat.playerToken === playerToken && Date.now() - lastLocalChatSoundAt < 4000;
           if (alert.chat.audioClip || alert.chat.voiceText) {
-            if (soundManager) {
+            if (soundManager && !isOwnRecentChat) {
               soundManager.speakBanter(alert.chat.voiceText, 'COUNTER_3X', alert.chat.audioClip);
             }
             showBanterCallout(alert.chat.nickname, alert.chat.text, 4200);
-          } else if (soundManager) {
+          } else if (soundManager && !isOwnRecentChat) {
             soundManager.playChatSound();
           }
           setSeatBubble(alert.chat.playerToken, alert.chat.text, 4800);

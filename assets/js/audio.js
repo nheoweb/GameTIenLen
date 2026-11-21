@@ -13,16 +13,54 @@
       this.flashInterval = null;
       this.viVoice = null;
       this.clipCache = {};
+      this.decodedBufferCache = {};
+      this.loadingClipPromises = {};
       this.currentVoiceAudio = null;
+      this.currentVoiceSource = null;
+      this.htmlAudioUnlocked = false;
+      this.preloadedStarted = false;
+      this.sharedVoiceAudio = null;
+
+      if (typeof window.Audio !== 'undefined') {
+        try {
+          this.sharedVoiceAudio = new window.Audio();
+          this.sharedVoiceAudio.preload = 'auto';
+          this.sharedVoiceAudio.setAttribute('playsinline', 'true');
+          this.sharedVoiceAudio.setAttribute('webkit-playsinline', 'true');
+        } catch (e) {
+          this.sharedVoiceAudio = null;
+        }
+      }
 
       window.addEventListener('focus', () => this.stopTabFlashing());
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
           this.stopTabFlashing();
+          if (this.ctx && (this.ctx.state === 'suspended' || this.ctx.state === 'interrupted')) {
+            this.ctx.resume().catch(() => {});
+          }
         }
       });
 
       this._initSpeechVoices();
+      this._bindGlobalAudioUnlock();
+    }
+
+    _bindGlobalAudioUnlock() {
+      const onGesture = () => {
+        if (
+          !this.ctx ||
+          this.ctx.state !== 'running' ||
+          !this.unlocked ||
+          !this.htmlAudioUnlocked ||
+          !this.preloadedStarted
+        ) {
+          this.unlockAudio();
+        }
+      };
+      ['touchstart', 'touchend', 'pointerdown', 'mousedown', 'click', 'keydown'].forEach((evt) => {
+        window.addEventListener(evt, onGesture, { passive: true, capture: true });
+      });
     }
 
     _initSpeechVoices() {
@@ -48,14 +86,133 @@
       if (!this.ctx) {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (AudioCtx) {
-          this.ctx = new AudioCtx();
+          try {
+            this.ctx = new AudioCtx();
+          } catch (e) {
+            this.ctx = null;
+          }
         }
       }
-      if (this.ctx && this.ctx.state === 'suspended') {
+      if (this.ctx && (this.ctx.state === 'suspended' || this.ctx.state === 'interrupted')) {
         this.ctx.resume().catch(() => {});
       }
       this.unlocked = Boolean(this.ctx && this.ctx.state === 'running');
       return this.ctx;
+    }
+
+    _resolveClipUrl(audioClip) {
+      if (!audioClip) return '';
+      const cfg = window.TLMN_CONFIG || {};
+      const audioBase = cfg.audioBase ? String(cfg.audioBase) : '';
+      if (!audioBase) return '';
+
+      const cleanClip = String(audioClip).replace(/^\/+/, '');
+      const verSuffix = cfg.audioVer ? '?v=' + encodeURIComponent(String(cfg.audioVer)) : '';
+      const rawUrl = audioBase.replace(/\/+$/, '') + '/' + cleanClip + verSuffix;
+
+      try {
+        const parsed = new URL(rawUrl, window.location.href);
+        if (window.location.protocol === 'https:' && parsed.protocol === 'http:') {
+          parsed.protocol = 'https:';
+        }
+        if (parsed.hostname === window.location.hostname) {
+          return parsed.pathname + parsed.search;
+        }
+        return parsed.toString();
+      } catch (e) {
+        return rawUrl;
+      }
+    }
+
+    _decodeAudioData(ctx, arrayBuffer) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const onResolve = (buf) => {
+          if (!settled) {
+            settled = true;
+            resolve(buf);
+          }
+        };
+        const onReject = (err) => {
+          if (!settled) {
+            settled = true;
+            reject(err || new Error('Decode failed'));
+          }
+        };
+        try {
+          const p = ctx.decodeAudioData(arrayBuffer, onResolve, onReject);
+          if (p && typeof p.then === 'function') {
+            p.then(onResolve).catch(onReject);
+          }
+        } catch (e) {
+          onReject(e);
+        }
+      });
+    }
+
+    _loadClipBuffer(clipUrl) {
+      if (!clipUrl) return Promise.reject(new Error('Empty clipUrl'));
+      if (this.decodedBufferCache[clipUrl]) {
+        return Promise.resolve(this.decodedBufferCache[clipUrl]);
+      }
+      if (this.loadingClipPromises[clipUrl]) {
+        return this.loadingClipPromises[clipUrl];
+      }
+      const ctx = this.initContext();
+      if (!ctx || typeof window.fetch !== 'function') {
+        return Promise.reject(new Error('Web Audio fetch unavailable'));
+      }
+
+      this.loadingClipPromises[clipUrl] = window
+        .fetch(clipUrl, { credentials: 'same-origin' })
+        .then((resp) => {
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.arrayBuffer();
+        })
+        .then((arrayBuf) => this._decodeAudioData(ctx, arrayBuf))
+        .then((audioBuf) => {
+          this.decodedBufferCache[clipUrl] = audioBuf;
+          delete this.loadingClipPromises[clipUrl];
+          return audioBuf;
+        })
+        .catch((err) => {
+          delete this.loadingClipPromises[clipUrl];
+          throw err;
+        });
+
+      return this.loadingClipPromises[clipUrl];
+    }
+
+    preloadVoiceClips() {
+      if (this.preloadedStarted) return;
+      const cfg = window.TLMN_CONFIG || {};
+      if (!cfg.audioBase) return;
+      this.preloadedStarted = true;
+
+      // Ưu tiên nạp trước 6 câu cà khịa trên thanh bấm nhanh cho mobile
+      const priorityClips = [
+        'counter_1.mp3',
+        'followup_1.mp3',
+        'quick_warn.mp3',
+        'quick_hurry.mp3',
+        'quick_age.mp3',
+        'quick_mercy.mp3',
+        'chop_1.mp3',
+        'chop_2.mp3',
+        'counter_2.mp3',
+        'counter_3.mp3',
+        'followup_2.mp3',
+        'lastcard_1.mp3',
+        'pig_1.mp3',
+        'win_1.mp3',
+      ];
+
+      priorityClips.forEach((clipName) => {
+        const url = this._resolveClipUrl(clipName);
+        if (url) {
+          this._loadClipBuffer(url).catch(() => {});
+        }
+      });
     }
 
     _getNoiseBuffer(ctx) {
@@ -76,16 +233,48 @@
       const ctx = this.initContext();
       if (ctx) {
         try {
+          if (ctx.state !== 'running') {
+            ctx.resume().catch(() => {});
+          }
           const buffer = ctx.createBuffer(1, 1, 22050);
           const source = ctx.createBufferSource();
           source.buffer = buffer;
           source.connect(ctx.destination);
-          source.start(0);
+          if (typeof source.start === 'function') {
+            source.start(0);
+          } else if (typeof source.noteOn === 'function') {
+            source.noteOn(0);
+          }
           this.unlocked = true;
         } catch (e) {
           // Bỏ qua
         }
       }
+
+      // Mở khóa phần tử HTML5 Audio dự phòng ngay trong thao tác chạm đầu tiên trên điện thoại
+      if (!this.htmlAudioUnlocked && this.sharedVoiceAudio) {
+        try {
+          this.sharedVoiceAudio.src =
+            'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+          this.sharedVoiceAudio.volume = 0.01;
+          const playPromise = this.sharedVoiceAudio.play();
+          if (playPromise && typeof playPromise.then === 'function') {
+            playPromise
+              .then(() => {
+                this.sharedVoiceAudio.pause();
+                this.sharedVoiceAudio.currentTime = 0;
+                this.sharedVoiceAudio.volume = 1.0;
+                this.htmlAudioUnlocked = true;
+              })
+              .catch(() => {});
+          }
+        } catch (e) {
+          // Bỏ qua
+        }
+      }
+
+      // Nạp sẵn các clip MP3 vào bộ nhớ Web Audio API
+      this.preloadVoiceClips();
 
       // Mở khóa Web Speech API trên trình duyệt di động/desktop
       if ('speechSynthesis' in window) {
@@ -95,10 +284,76 @@
           // Bỏ qua
         }
       }
+    }
 
-      if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
+    _stopCurrentVoice() {
+      if (this.currentVoiceSource) {
+        try {
+          this.currentVoiceSource.stop(0);
+          this.currentVoiceSource.disconnect();
+        } catch (e) {
+          // Bỏ qua
+        }
+        this.currentVoiceSource = null;
       }
+      if (this.currentVoiceAudio) {
+        try {
+          this.currentVoiceAudio.pause();
+          this.currentVoiceAudio.currentTime = 0;
+        } catch (e) {
+          // Bỏ qua
+        }
+      }
+    }
+
+    _playDecodedBuffer(audioBuf) {
+      if (this.muted || !audioBuf) return false;
+      const ctx = this.initContext();
+      if (!ctx) return false;
+
+      this._stopCurrentVoice();
+      try {
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuf;
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(1.25, ctx.currentTime);
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        source.onended = () => {
+          if (this.currentVoiceSource === source) {
+            this.currentVoiceSource = null;
+          }
+        };
+        this.currentVoiceSource = source;
+        source.start(0);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    _playHtmlAudioOrSpeech(clipUrl, voiceText) {
+      if (this.muted) return;
+      if (clipUrl && typeof window.Audio !== 'undefined') {
+        try {
+          this._stopCurrentVoice();
+          const audioEl = this.sharedVoiceAudio || this.clipCache[clipUrl] || new window.Audio();
+          audioEl.src = clipUrl;
+          audioEl.volume = 1.0;
+          audioEl.currentTime = 0;
+          this.currentVoiceAudio = audioEl;
+          const playPromise = audioEl.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => {
+              this._fallbackSpeech(voiceText);
+            });
+          }
+          return;
+        } catch (e) {
+          // Rơi xuống fallback Web Speech
+        }
+      }
+      this._fallbackSpeech(voiceText);
     }
 
     setMuted(muted) {
@@ -115,13 +370,8 @@
           // Bỏ qua
         }
       }
-      if (this.muted && this.currentVoiceAudio) {
-        try {
-          this.currentVoiceAudio.pause();
-          this.currentVoiceAudio.currentTime = 0;
-        } catch (e) {
-          // Bỏ qua
-        }
+      if (this.muted) {
+        this._stopCurrentVoice();
       }
       return this.muted;
     }
@@ -282,66 +532,57 @@
     }
 
     /**
-     * Phát câu nói cà khịa / tương tác vui nhộn Giọng Miền Nam (Ưu tiên file MP3 giọng Miền Nam -> fallback Web Speech)
+     * Phát câu nói cà khịa / tương tác vui nhộn Giọng Miền Nam
+     * (Ưu tiên Web Audio API AudioBuffer để vượt rào cản chặn Autoplay trên Mobile -> HTML5 Audio -> Web Speech)
      */
     speakBanter(voiceText, banterKind, audioClip) {
       if (this.muted || (!voiceText && !audioClip)) return;
 
+      const ctx = this.initContext();
+
       // 1. Nhạc hiệu ứng ngắn (Comic Stinger) theo tình huống
       if (banterKind === 'COUNTER_3X') {
-        this._playTone({ freq: 659.25, type: 'triangle', startOffset: 0.06, duration: 0.09, gain: 0.24 });
-        this._playTone({ freq: 783.99, type: 'triangle', startOffset: 0.15, duration: 0.09, gain: 0.26 });
-        this._playTone({ freq: 1046.5, type: 'sawtooth', startOffset: 0.24, duration: 0.18, gain: 0.24 });
+        this._playTone({ freq: 659.25, type: 'triangle', startOffset: 0.02, duration: 0.08, gain: 0.16 });
+        this._playTone({ freq: 783.99, type: 'triangle', startOffset: 0.1, duration: 0.08, gain: 0.18 });
+        this._playTone({ freq: 1046.5, type: 'sawtooth', startOffset: 0.18, duration: 0.14, gain: 0.16 });
       } else if (banterKind === 'FOLLOW_UP_STRIKE') {
-        this._playTone({ freq: 587.33, type: 'triangle', startOffset: 0.06, duration: 0.1, gain: 0.24 });
-        this._playTone({ freq: 880.0, type: 'sawtooth', startOffset: 0.16, duration: 0.18, gain: 0.24 });
+        this._playTone({ freq: 587.33, type: 'triangle', startOffset: 0.02, duration: 0.09, gain: 0.16 });
+        this._playTone({ freq: 880.0, type: 'sawtooth', startOffset: 0.11, duration: 0.15, gain: 0.16 });
       } else if (banterKind === 'LAST_CARD') {
-        this._playTone({ freq: 880, type: 'square', startOffset: 0.06, duration: 0.09, gain: 0.2 });
-        this._playTone({ freq: 1318.5, type: 'square', startOffset: 0.17, duration: 0.14, gain: 0.22 });
+        this._playTone({ freq: 880, type: 'square', startOffset: 0.02, duration: 0.08, gain: 0.16 });
+        this._playTone({ freq: 1318.5, type: 'square', startOffset: 0.12, duration: 0.12, gain: 0.18 });
       } else if (banterKind === 'PIG_PLAYED') {
-        this._playTone({ freq: 392, slideTo: 587.33, type: 'triangle', startOffset: 0.06, duration: 0.2, gain: 0.24 });
+        this._playTone({ freq: 392, slideTo: 587.33, type: 'triangle', startOffset: 0.02, duration: 0.18, gain: 0.18 });
       }
 
       if (!this.voiceEnabled) return;
 
-      // 2. Ưu tiên phát file MP3 Giọng Miền Nam đóng gói sẵn trong plugin
-      const cfg = window.TLMN_CONFIG || {};
-      const audioBase = cfg.audioBase ? String(cfg.audioBase) : '';
-      if (audioClip && audioBase && typeof window.Audio !== 'undefined') {
-        setTimeout(() => {
-          if (this.muted) return;
-          try {
-            if (this.currentVoiceAudio) {
-              this.currentVoiceAudio.pause();
-              this.currentVoiceAudio.currentTime = 0;
-            }
-            const clipUrl = audioBase.replace(/\/+$/, '') + '/' + audioClip;
-            let audioEl = this.clipCache[clipUrl];
-            if (!audioEl) {
-              audioEl = new window.Audio(clipUrl);
-              audioEl.preload = 'auto';
-              this.clipCache[clipUrl] = audioEl;
-            } else {
-              audioEl.currentTime = 0;
-            }
-            this.currentVoiceAudio = audioEl;
-            const playPromise = audioEl.play();
-            if (playPromise && typeof playPromise.catch === 'function') {
-              playPromise.catch(() => {
-                this._fallbackSpeech(voiceText);
-              });
-            }
-          } catch (e) {
-            this._fallbackSpeech(voiceText);
-          }
-        }, 95);
+      // 2. Phát file MP3 Giọng Miền Nam qua Web Audio API (hoạt động 100% trên cả iOS Safari & Android Mobile)
+      const clipUrl = this._resolveClipUrl(audioClip);
+      if (clipUrl) {
+        if (this.decodedBufferCache[clipUrl] && this._playDecodedBuffer(this.decodedBufferCache[clipUrl])) {
+          return;
+        }
+        if (ctx && typeof window.fetch === 'function') {
+          this._loadClipBuffer(clipUrl)
+            .then((audioBuf) => {
+              if (!this.muted) {
+                if (!this._playDecodedBuffer(audioBuf)) {
+                  this._playHtmlAudioOrSpeech(clipUrl, voiceText);
+                }
+              }
+            })
+            .catch(() => {
+              this._playHtmlAudioOrSpeech(clipUrl, voiceText);
+            });
+          return;
+        }
+        this._playHtmlAudioOrSpeech(clipUrl, voiceText);
         return;
       }
 
-      // 3. Dự phòng bằng Web Speech API (ưu tiên giọng HoaiMy Miền Nam)
-      setTimeout(() => {
-        this._fallbackSpeech(voiceText);
-      }, 100);
+      // 3. Dự phòng bằng Web Speech API nếu không có file MP3
+      this._fallbackSpeech(voiceText);
     }
 
     _fallbackSpeech(voiceText) {

@@ -3,7 +3,7 @@
  * Plugin Name:       Tiến Lên Miền Nam Nội Bộ
  * Plugin URI:        https://wordpress.org/
  * Description:       Game bài Tiến Lên Miền Nam Online nội bộ (2–4 người chơi), chạy thuần PHP + MySQL + REST API ngay trên WordPress không cần server Node.js.
- * Version:           1.0.0
+ * Version:           1.1.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Game Tiến Lên Nội Bộ
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TLMN_VERSION', '1.0.0' );
+define( 'TLMN_VERSION', '1.1.0' );
 define( 'TLMN_DB_VERSION', '1.0.0' );
 define( 'TLMN_PLUGIN_FILE', __FILE__ );
 define( 'TLMN_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
@@ -114,6 +114,18 @@ class TLMN_Plugin {
 	}
 
 	/**
+	 * Lấy version động theo filemtime để tự động phá cache trình duyệt mobile/desktop khi cập nhật plugin.
+	 *
+	 * @param string $relative_path Đường dẫn tương đối tính từ thư mục plugin.
+	 * @return string
+	 */
+	public static function get_asset_version( $relative_path ) {
+		$full_path = TLMN_PLUGIN_PATH . ltrim( (string) $relative_path, '/\\' );
+		$mtime     = file_exists( $full_path ) ? (int) filemtime( $full_path ) : 0;
+		return $mtime > 0 ? TLMN_VERSION . '.' . $mtime : TLMN_VERSION;
+	}
+
+	/**
 	 * Lấy cấu hình truyền xuống JavaScript frontend.
 	 *
 	 * @return array<string, mixed>
@@ -131,6 +143,7 @@ class TLMN_Plugin {
 			'restBase'    => esc_url_raw( rest_url( TLMN_Rest_Api::API_NAMESPACE ) ),
 			'homeUrl'     => esc_url_raw( home_url( '/' ) ),
 			'audioBase'   => esc_url_raw( TLMN_PLUGIN_URL . 'assets/audio/' ),
+			'audioVer'    => self::get_asset_version( 'assets/audio/counter_1.mp3' ),
 			'wpUserName'  => $wp_user_name,
 			'pollRoomMs'  => 900,
 			'pollLobbyMs' => 2500,
@@ -200,14 +213,14 @@ class TLMN_Plugin {
 			'tlmn-style',
 			TLMN_PLUGIN_URL . 'assets/css/tien-len.css',
 			array(),
-			TLMN_VERSION
+			self::get_asset_version( 'assets/css/tien-len.css' )
 		);
 
 		wp_enqueue_script(
 			'tlmn-audio',
 			TLMN_PLUGIN_URL . 'assets/js/audio.js',
 			array(),
-			TLMN_VERSION,
+			self::get_asset_version( 'assets/js/audio.js' ),
 			true
 		);
 
@@ -215,7 +228,7 @@ class TLMN_Plugin {
 			'tlmn-app',
 			TLMN_PLUGIN_URL . 'assets/js/app.js',
 			array( 'tlmn-audio' ),
-			TLMN_VERSION,
+			self::get_asset_version( 'assets/js/app.js' ),
 			true
 		);
 
