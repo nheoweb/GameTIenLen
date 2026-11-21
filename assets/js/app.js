@@ -6,9 +6,18 @@
 
   const config = window.TLMN_CONFIG || {};
   const soundManager = window.TLMN_SoundManager;
+  const voiceManager = window.TLMN_VoiceManager;
   const REST_BASE = String(config.restBase || '/wp-json/tien-len/v1').replace(/\/+$/, '');
   const POLL_ROOM_MS = Number(config.pollRoomMs) || 900;
   const POLL_LOBBY_MS = Number(config.pollLobbyMs) || 2500;
+
+  if (voiceManager && typeof voiceManager.configure === 'function') {
+    voiceManager.configure({
+      restBase: REST_BASE,
+      iceServers: Array.isArray(config.iceServers) ? config.iceServers : undefined,
+      audioMuted: Boolean(soundManager && soundManager.muted),
+    });
+  }
 
   // Lưu playerToken trong localStorage (đồng bộ sessionStorage) để:
   // 1) Bấm F5 tải lại trang hoặc bấm lại link mời mở sang tab mới trên cùng 1 máy vẫn giữ đúng 1 ghế duy nhất (không bị nhân bản thành nhiều ghế "Dell")
@@ -55,6 +64,9 @@
   let banterTimeout = null;
   let lastRenderedChatId = -1;
   let lastLocalChatSoundAt = 0;
+  let unreadChatCount = 0;
+  let isChatDrawerOpen = false;
+  let rotatePromptDismissed = false;
   const seatBubbles = {}; // playerToken -> { text, expiresAt }
 
   // DOM Elements (scoped trong root)
@@ -78,6 +90,17 @@
 
   const btnTestAlarm = $('btnTestAlarm');
   const btnToggleSound = $('btnToggleSound');
+  const btnRoomToggleSound = $('btnRoomToggleSound');
+  const btnToggleMic = $('btnToggleMic');
+  const btnToggleChatDrawer = $('btnToggleChatDrawer');
+  const btnCloseChatDrawer = $('btnCloseChatDrawer');
+  const chatUnreadBadge = $('chatUnreadBadge');
+  const chatDrawerBackdrop = $('chatDrawerBackdrop');
+  const roomBottomDrawer = $('roomBottomDrawer');
+  const btnToggleLandscape = $('btnToggleLandscape');
+  const portraitRotatePrompt = $('portraitRotatePrompt');
+  const btnEnterLandscape = $('btnEnterLandscape');
+  const btnDismissRotatePrompt = $('btnDismissRotatePrompt');
   const alertBanner = $('alertBanner');
   const alertBannerText = $('alertBannerText');
 
@@ -97,7 +120,6 @@
   const countdownOverlay = $('countdownOverlay');
   const countdownNumber = $('countdownNumber');
   const waitingTitle = $('waitingTitle');
-  const waitingInstruction = $('waitingInstruction');
   const rankingsBox = $('rankingsBox');
   const rankingsList = $('rankingsList');
   const btnReadyToggle = $('btnReadyToggle');
@@ -110,12 +132,10 @@
 
   const playControlsBar = $('playControlsBar');
   const selectedComboHint = $('selectedComboHint');
-  const btnClearSelection = $('btnClearSelection');
   const btnPassTurn = $('btnPassTurn');
   const btnPlayCards = $('btnPlayCards');
   const myHandContainer = $('myHandContainer');
 
-  const roomLogList = $('roomLogList');
   const spectatorBadge = $('spectatorBadge');
   const banterCalloutBox = $('banterCalloutBox');
   const chatMessagesList = $('chatMessagesList');
@@ -237,28 +257,282 @@
 
   inputNickname.addEventListener('change', getNickname);
 
-  // Nút Âm thanh
+  // Nút Âm thanh (Đồng bộ giữa Sảnh chờ, Thanh công cụ trong bàn & Loa Voice Chat)
   function updateSoundButtonUI() {
     if (!soundManager) return;
-    if (soundManager.muted) {
-      btnToggleSound.textContent = '🔇 Âm thanh: ĐÃ TẮT';
-      btnToggleSound.setAttribute('aria-pressed', 'true');
-    } else {
-      btnToggleSound.textContent = '🔊 Âm thanh: BẬT';
-      btnToggleSound.setAttribute('aria-pressed', 'false');
+    const isMuted = Boolean(soundManager.muted);
+    if (btnToggleSound) {
+      btnToggleSound.textContent = isMuted ? '🔇 Âm thanh: ĐÃ TẮT' : '🔊 Âm thanh: BẬT';
+      btnToggleSound.setAttribute('aria-pressed', String(isMuted));
+      btnToggleSound.classList.toggle('btn-sound-muted', isMuted);
+    }
+    if (btnRoomToggleSound) {
+      btnRoomToggleSound.textContent = isMuted ? '🔇 Âm: TẮT' : '🔊 Âm: BẬT';
+      btnRoomToggleSound.setAttribute('aria-pressed', String(isMuted));
+      btnRoomToggleSound.classList.toggle('btn-sound-muted', isMuted);
+    }
+    if (voiceManager && typeof voiceManager.setAudioMuted === 'function') {
+      voiceManager.setAudioMuted(isMuted);
     }
   }
   updateSoundButtonUI();
 
-  btnToggleSound.addEventListener('click', () => {
+  function handleToggleSoundClick() {
     if (!soundManager) return;
     soundManager.unlockAudio();
     soundManager.toggleMute();
     updateSoundButtonUI();
     if (!soundManager.muted) {
       soundManager.playJoinSound();
+      if (voiceManager && typeof voiceManager.unlockRemoteAudio === 'function') {
+        voiceManager.unlockRemoteAudio();
+      }
     }
+  }
+
+  if (btnToggleSound) {
+    btnToggleSound.addEventListener('click', handleToggleSoundClick);
+  }
+  if (btnRoomToggleSound) {
+    btnRoomToggleSound.addEventListener('click', handleToggleSoundClick);
+  }
+
+  // ==================== VOICE CHAT CONTROLS ====================
+  function updateMicButtonUI(stateObj) {
+    if (!btnToggleMic) return;
+    const micOn = Boolean(stateObj && stateObj.micEnabled);
+    btnToggleMic.textContent = micOn ? '🎙️ Mic: BẬT' : '🎤 Mic: TẮT';
+    btnToggleMic.setAttribute('aria-pressed', String(micOn));
+    btnToggleMic.classList.toggle('mic-on', micOn);
+  }
+
+  if (voiceManager) {
+    voiceManager.onMicStateChange = (st) => {
+      updateMicButtonUI(st);
+      if (currentRoomState) {
+        renderFourSeats(currentRoomState);
+      }
+    };
+    voiceManager.onPeerMicStateChange = () => {
+      if (currentRoomState) {
+        renderFourSeats(currentRoomState);
+      }
+    };
+    voiceManager.onSpeakingChange = (tok, isSpeaking) => {
+      if (!tok) return;
+      const cards = root.querySelectorAll('.seat-card[data-player-token]');
+      cards.forEach((card) => {
+        if (card.getAttribute('data-player-token') === tok) {
+          card.classList.toggle('is-speaking', Boolean(isSpeaking));
+        }
+      });
+    };
+    voiceManager.onNotice = (msg) => {
+      if (msg) showAlertBanner(msg, 6000);
+    };
+  }
+
+  if (btnToggleMic) {
+    btnToggleMic.addEventListener('click', async () => {
+      if (soundManager) soundManager.unlockAudio();
+      if (!voiceManager) {
+        showAlertBanner('⚠️ Mô-đun Voice Chat chưa sẵn sàng.');
+        return;
+      }
+      btnToggleMic.disabled = true;
+      try {
+        const isOn = await voiceManager.toggleMic();
+        if (isOn) {
+          showAlertBanner('🎙️ Đã BẬT Micro — Bạn có thể nói chuyện trực tiếp với cả bàn!', 3200);
+        }
+      } finally {
+        btnToggleMic.disabled = false;
+      }
+    });
+  }
+
+  // ==================== LANDSCAPE & FULLSCREEN CONTROLLER ====================
+  function isMobileTouchDevice() {
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const minSide = Math.min(window.screen.width || window.innerWidth, window.screen.height || window.innerHeight);
+    return coarse || minSide <= 600;
+  }
+
+  function isPortraitViewport() {
+    return window.innerHeight > window.innerWidth;
+  }
+
+  function isFullscreenActive() {
+    return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  function updateLandscapeControlsUI() {
+    const inRoom = Boolean(currentRoomId);
+    const forced = document.body.classList.contains('tlmn-force-landscape');
+    const portrait = isPortraitViewport();
+    const isMobile = isMobileTouchDevice();
+
+    if (portraitRotatePrompt) {
+      const shouldShow = inRoom && isMobile && portrait && !forced && !rotatePromptDismissed;
+      portraitRotatePrompt.classList.toggle('hidden', !shouldShow);
+    }
+
+    if (btnToggleLandscape) {
+      if (forced) {
+        btnToggleLandscape.textContent = '↩️ Dọc';
+      } else if (isFullscreenActive()) {
+        btnToggleLandscape.textContent = '⛶ Thoát';
+      } else {
+        btnToggleLandscape.textContent = '📱 Ngang';
+      }
+    }
+  }
+
+  async function tryEnterLandscapeMode(allowCssFallback) {
+    const docEl = document.documentElement;
+    let lockedNatively = false;
+
+    try {
+      if (!isFullscreenActive()) {
+        if (docEl.requestFullscreen) {
+          await docEl.requestFullscreen({ navigationUI: 'hide' }).catch(() => docEl.requestFullscreen());
+        } else if (docEl.webkitRequestFullscreen) {
+          docEl.webkitRequestFullscreen();
+        }
+      }
+    } catch (e) {
+      // Trình duyệt (VD: iOS Safari) có thể không hỗ trợ Fullscreen
+    }
+
+    try {
+      if (window.screen && window.screen.orientation && typeof window.screen.orientation.lock === 'function') {
+        await window.screen.orientation.lock('landscape');
+        lockedNatively = true;
+      }
+    } catch (e) {
+      lockedNatively = false;
+    }
+
+    // Dự phòng bằng xoay CSS 90° cho iOS Safari hoặc điện thoại khóa xoay màn hình
+    if (!lockedNatively && allowCssFallback && isPortraitViewport() && isMobileTouchDevice()) {
+      document.body.classList.add('tlmn-force-landscape');
+    } else if (!isPortraitViewport()) {
+      document.body.classList.remove('tlmn-force-landscape');
+    }
+
+    updateLandscapeControlsUI();
+  }
+
+  async function exitLandscapeMode() {
+    document.body.classList.remove('tlmn-force-landscape');
+    try {
+      if (window.screen && window.screen.orientation && typeof window.screen.orientation.unlock === 'function') {
+        window.screen.orientation.unlock();
+      }
+    } catch (e) {
+      // Bỏ qua
+    }
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        await document.exitFullscreen();
+      } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      }
+    } catch (e) {
+      // Bỏ qua
+    }
+    updateLandscapeControlsUI();
+  }
+
+  if (btnEnterLandscape) {
+    btnEnterLandscape.addEventListener('click', () => {
+      if (soundManager) soundManager.unlockAudio();
+      if (voiceManager) voiceManager.unlockRemoteAudio();
+      tryEnterLandscapeMode(true);
+    });
+  }
+
+  if (btnDismissRotatePrompt) {
+    btnDismissRotatePrompt.addEventListener('click', () => {
+      rotatePromptDismissed = true;
+      updateLandscapeControlsUI();
+    });
+  }
+
+  if (btnToggleLandscape) {
+    btnToggleLandscape.addEventListener('click', () => {
+      if (soundManager) soundManager.unlockAudio();
+      if (voiceManager) voiceManager.unlockRemoteAudio();
+      if (document.body.classList.contains('tlmn-force-landscape') || isFullscreenActive()) {
+        exitLandscapeMode();
+      } else {
+        tryEnterLandscapeMode(true);
+      }
+    });
+  }
+
+  window.addEventListener('resize', () => {
+    if (!isPortraitViewport() && document.body.classList.contains('tlmn-force-landscape')) {
+      document.body.classList.remove('tlmn-force-landscape');
+    }
+    updateLandscapeControlsUI();
   });
+  window.addEventListener('orientationchange', () => {
+    setTimeout(updateLandscapeControlsUI, 150);
+  });
+  document.addEventListener('fullscreenchange', updateLandscapeControlsUI);
+
+  // ==================== CHAT DRAWER (MOBILE & LANDSCAPE) ====================
+  function updateUnreadChatBadge() {
+    const hasUnread = unreadChatCount > 0 && !isChatDrawerOpen;
+    if (chatUnreadBadge) {
+      if (hasUnread) {
+        chatUnreadBadge.textContent = unreadChatCount > 9 ? '9+' : String(unreadChatCount);
+        chatUnreadBadge.classList.remove('hidden');
+      } else {
+        chatUnreadBadge.classList.add('hidden');
+      }
+    }
+    if (btnToggleChatDrawer) {
+      btnToggleChatDrawer.classList.toggle('has-unread', hasUnread);
+    }
+  }
+
+  function setChatDrawerOpen(open) {
+    isChatDrawerOpen = Boolean(open);
+    if (roomBottomDrawer) {
+      roomBottomDrawer.classList.toggle('drawer-open', isChatDrawerOpen);
+    }
+    if (chatDrawerBackdrop) {
+      chatDrawerBackdrop.classList.toggle('hidden', !isChatDrawerOpen);
+    }
+    if (btnToggleChatDrawer) {
+      btnToggleChatDrawer.setAttribute('aria-expanded', String(isChatDrawerOpen));
+    }
+    if (isChatDrawerOpen) {
+      unreadChatCount = 0;
+      updateUnreadChatBadge();
+      if (chatMessagesList) {
+        chatMessagesList.scrollTop = chatMessagesList.scrollHeight;
+      }
+    }
+  }
+
+  if (btnToggleChatDrawer) {
+    btnToggleChatDrawer.addEventListener('click', () => {
+      setChatDrawerOpen(!isChatDrawerOpen);
+    });
+  }
+  if (btnCloseChatDrawer) {
+    btnCloseChatDrawer.addEventListener('click', () => {
+      setChatDrawerOpen(false);
+    });
+  }
+  if (chatDrawerBackdrop) {
+    chatDrawerBackdrop.addEventListener('click', () => {
+      setChatDrawerOpen(false);
+    });
+  }
 
   btnTestAlarm.addEventListener('click', () => {
     if (!soundManager) return;
@@ -489,7 +763,7 @@
       inputRoomCode.focus();
       return;
     }
-    joinRoomById(code);
+    joinRoomById(code, true);
   });
 
   inputRoomCode.addEventListener('keydown', (e) => {
@@ -529,13 +803,27 @@
     lastRoomVersion = initialState ? Number(initialState.version) || 0 : 0;
     lastSeenEventId = initialState ? Number(initialState.latestEventId) || 0 : 0;
     lastCountdownSeconds = null;
+    unreadChatCount = 0;
+    rotatePromptDismissed = false;
+    setChatDrawerOpen(false);
+    updateUnreadChatBadge();
 
     setUrlRoomParam(roomId);
+    document.body.classList.add('tlmn-in-room');
     lobbyView.classList.add('hidden');
     roomView.classList.remove('hidden');
+    updateLandscapeControlsUI();
 
     if (soundManager && typeof soundManager.setRoomKeepAlive === 'function') {
       soundManager.setRoomKeepAlive(true);
+    }
+
+    if (voiceManager && typeof voiceManager.joinRoom === 'function') {
+      const members = []
+        .concat((initialState && initialState.players) || [])
+        .concat((initialState && initialState.spectators) || []);
+      voiceManager.joinRoom(roomId, playerToken, members);
+      updateMicButtonUI(voiceManager.getMicState());
     }
 
     if (initialState) {
@@ -549,18 +837,27 @@
   }
 
   function resetToLobbyUI() {
+    if (voiceManager && typeof voiceManager.leaveRoom === 'function') {
+      voiceManager.leaveRoom(true);
+    }
     currentRoomId = null;
     currentRoomState = null;
     lastRoomVersion = 0;
     lastSeenEventId = 0;
     lastCountdownSeconds = null;
+    unreadChatCount = 0;
     selectedCardIds.clear();
+    setChatDrawerOpen(false);
+    updateUnreadChatBadge();
+    exitLandscapeMode();
+    document.body.classList.remove('tlmn-in-room');
     if (soundManager && typeof soundManager.setRoomKeepAlive === 'function') {
       soundManager.setRoomKeepAlive(false);
     }
     setUrlRoomParam(null);
     roomView.classList.add('hidden');
     lobbyView.classList.remove('hidden');
+    updateLandscapeControlsUI();
     startLobbyPolling();
   }
 
@@ -678,12 +975,6 @@
     }
   });
 
-  // Nút Bỏ chọn bài
-  btnClearSelection.addEventListener('click', () => {
-    selectedCardIds.clear();
-    renderMyHand();
-  });
-
   // Nút Đánh bài
   btnPlayCards.addEventListener('click', async () => {
     if (!currentRoomId || selectedCardIds.size === 0 || isActionBusy) return;
@@ -764,14 +1055,14 @@
       }
     }
 
-    // Hiển thị bong bóng tức thì cho người bấm
+    // Hiển thị 1 bong bóng chat ngay tại vị trí ghế người vừa nhắn (khán giả không có ghế mới dùng callout giữa bàn)
     if (currentRoomState) {
       const me = (currentRoomState.players || []).find((p) => p.playerToken === playerToken);
-      const myName = (me && me.nickname) || getNickname();
-      if (audioClip || voiceText) {
-        showBanterCallout(myName, cleanText, 4200);
+      if (me) {
+        setSeatBubble(playerToken, cleanText, 4800);
+      } else {
+        showBanterCallout(getNickname(), cleanText, 4200);
       }
-      setSeatBubble(playerToken, cleanText, 4800);
     }
 
     if (!currentRoomId || isChatBusy) return;
@@ -847,12 +1138,29 @@
     });
   }
 
+  if (roomView) {
+    roomView.addEventListener(
+      'pointerdown',
+      () => {
+        if (voiceManager && typeof voiceManager.unlockRemoteAudio === 'function') {
+          voiceManager.unlockRemoteAudio();
+        }
+      },
+      { passive: true }
+    );
+  }
+
   // ==================== STATE & ALERTS ====================
 
   function applyRoomState(state, processEvents) {
     if (!state) return;
     currentRoomState = state;
     lastRoomVersion = Number(state.version) || lastRoomVersion;
+
+    if (voiceManager && typeof voiceManager.syncRoomMembers === 'function') {
+      const members = [].concat(state.players || []).concat(state.spectators || []);
+      voiceManager.syncRoomMembers(members);
+    }
 
     // Xử lý tiếng bíp đếm ngược (3..2..1)
     if (state.status === 'COUNTDOWN' && state.countdownSeconds !== null && state.countdownSeconds !== undefined) {
@@ -961,7 +1269,6 @@
           if (soundManager) {
             soundManager.speakBanter(alert.banter.voiceText, alert.banter.kind, alert.banter.audioClip);
           }
-          showBanterCallout(alert.nickname, alert.banter.displayText, 4200);
           setSeatBubble(alert.playerToken, alert.banter.displayText, 4500);
         }
         break;
@@ -973,7 +1280,6 @@
           if (soundManager) {
             soundManager.speakBanter(alert.banter.voiceText, alert.banter.kind, alert.banter.audioClip);
           }
-          showBanterCallout(alert.nickname, alert.banter.displayText, 4600);
           setSeatBubble(alert.playerToken, alert.banter.displayText, 4600);
         }
         break;
@@ -982,15 +1288,26 @@
         if (alert.chat) {
           const isOwnRecentChat =
             alert.chat.playerToken === playerToken && Date.now() - lastLocalChatSoundAt < 4000;
+          if (alert.chat.playerToken !== playerToken && !isChatDrawerOpen) {
+            unreadChatCount += 1;
+            updateUnreadChatBadge();
+          }
           if (alert.chat.audioClip || alert.chat.voiceText) {
             if (soundManager && !isOwnRecentChat) {
               soundManager.speakBanter(alert.chat.voiceText, 'COUNTER_3X', alert.chat.audioClip);
             }
-            showBanterCallout(alert.chat.nickname, alert.chat.text, 4200);
           } else if (soundManager && !isOwnRecentChat) {
             soundManager.playChatSound();
           }
-          setSeatBubble(alert.chat.playerToken, alert.chat.text, 4800);
+          const isSeatedSpeaker =
+            currentRoomState &&
+            Array.isArray(currentRoomState.players) &&
+            currentRoomState.players.some((p) => p.playerToken === alert.chat.playerToken);
+          if (isSeatedSpeaker) {
+            setSeatBubble(alert.chat.playerToken, alert.chat.text, 4800);
+          } else {
+            showBanterCallout(alert.chat.nickname, alert.chat.text, 4200);
+          }
         }
         break;
 
@@ -1049,7 +1366,7 @@
         '</button>';
 
       card.querySelector('.btn-join-room').addEventListener('click', () => {
-        joinRoomById(r.roomId);
+        joinRoomById(r.roomId, true);
       });
 
       lobbyRoomsList.appendChild(card);
@@ -1066,11 +1383,13 @@
         ? 'Nghỉ giữa ván (Đã chơi ' + state.roundNumber + ' ván)'
         : 'Phòng chờ';
 
-    if (state.spectators && state.spectators.length > 0) {
-      spectatorBadge.classList.remove('hidden');
-      spectatorBadge.textContent = '👀 Khán giả: ' + state.spectators.map((s) => s.nickname).join(', ');
-    } else {
-      spectatorBadge.classList.add('hidden');
+    if (spectatorBadge) {
+      if (state.spectators && state.spectators.length > 0) {
+        spectatorBadge.classList.remove('hidden');
+        spectatorBadge.textContent = '👀 Khán giả: ' + state.spectators.map((s) => s.nickname).join(', ');
+      } else {
+        spectatorBadge.classList.add('hidden');
+      }
     }
 
     renderFourSeats(state);
@@ -1088,12 +1407,6 @@
 
     renderMyHand();
     renderChatMessages(state.chats || []);
-
-    roomLogList.innerHTML = (state.logs || [])
-      .slice()
-      .reverse()
-      .map((line) => '<div>' + escapeHtml(line) + '</div>')
-      .join('');
   }
 
   function renderChatMessages(chats) {
@@ -1187,15 +1500,37 @@
 
     const activeBubble =
       seatBubbles[player.playerToken] && Date.now() < seatBubbles[player.playerToken].expiresAt
-        ? '<div class="seat-chat-bubble">' + escapeHtml(seatBubbles[player.playerToken].text) + '</div>'
+        ? '<div class="seat-chat-bubble">' +
+          '<span class="seat-chat-bubble-text">' + escapeHtml(seatBubbles[player.playerToken].text) + '</span>' +
+          '<svg class="seat-chat-tail" viewBox="0 0 24 14" fill="none" aria-hidden="true">' +
+          '<path d="M 6 0 L 21 0 C 16 7 10 11 2 12 C 6 8 7 4 6 0 Z" fill="#ffffff"/>' +
+          '<path d="M 6 1.5 C 7 5 5.5 9 2 12 C 10 11 16 7 21 1.5" stroke="#181a1b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+          '</svg>' +
+          '</div>'
         : '';
 
+    const micOn =
+      voiceManager && typeof voiceManager.hasPeerMicState === 'function' && voiceManager.hasPeerMicState(player.playerToken)
+        ? voiceManager.getPeerMicOn(player.playerToken)
+        : Boolean(player.micOn);
+    const speaking =
+      voiceManager && typeof voiceManager.isSpeaking === 'function'
+        ? voiceManager.isSpeaking(player.playerToken)
+        : false;
+    const micBadgeHtml =
+      '<span class="seat-mic-badge ' + (micOn ? 'is-on' : 'is-off') + '" title="' + (micOn ? 'Micro đang bật' : 'Micro đang tắt') + '">' +
+      (micOn ? '🎙️' : '🔇') +
+      '</span>';
+
     return (
-      '<div class="seat-card ' + (isTurn ? 'active-turn' : '') + '">' +
+      '<div class="seat-card ' + (isTurn ? 'active-turn ' : '') + (speaking ? 'is-speaking' : '') + '" data-player-token="' + escapeHtml(player.playerToken) + '">' +
       activeBubble +
       '<div class="seat-header-line">' +
-      '<span>' + (player.isHost ? '👑 ' : '') + escapeHtml(player.nickname) + (isMe ? ' (Bạn)' : '') + '</span>' +
+      '<span class="seat-name-text">' + (player.isHost ? '👑 ' : '') + escapeHtml(player.nickname) + (isMe ? ' (Bạn)' : '') + '</span>' +
+      '<span class="seat-status-icons">' +
+      micBadgeHtml +
       '<span title="' + (player.online ? 'Đang trực tuyến' : 'Tạm mất kết nối') + '">' + (player.online ? '🟢' : '🔴') + '</span>' +
+      '</span>' +
       '</div>' +
       '<div class="seat-badges-line">' +
       '<span>Điểm: <strong>' + player.score + '</strong></span>' +
@@ -1244,17 +1579,10 @@
 
     if (totalPlayers < 2) {
       waitingTitle.textContent = 'Đang chờ thêm người chơi (' + totalPlayers + '/4 người)...';
-      waitingInstruction.textContent =
-        'Hãy bấm nút "📋 Copy Link Mời Bạn" ở góc trên để gửi cho bạn bè hoặc bảo bạn vào từ Sảnh chờ.';
     } else if (totalPlayers === 4) {
       waitingTitle.textContent = '🔔 ĐÃ ĐỦ 4/4 CHÂN! (Đã sẵn sàng: ' + readyCount + '/4)';
-      waitingInstruction.textContent =
-        'Khi cả 4/4 người cùng bấm nút [SẴN SÀNG], hệ thống sẽ tự động đếm ngược 3 giây và chia bài!';
     } else {
       waitingTitle.textContent = 'Đã có ' + totalPlayers + '/4 người trong bàn (Sẵn sàng: ' + readyCount + '/' + totalPlayers + ')';
-      waitingInstruction.textContent = canHostStart
-        ? '✅ 100% người trong bàn đã Sẵn sàng! Chủ phòng có thể bấm [🃏 BẮT ĐẦU CHIA BÀI] ngay hoặc chờ thêm người thứ 4.'
-        : 'Tất cả người chơi trong bàn hãy bấm [SẴN SÀNG]. Khi 100% đã Sẵn sàng, Chủ phòng sẽ mở khóa nút Chia bài.';
     }
 
     if (me) {
@@ -1316,10 +1644,27 @@
         '<div class="trick-empty">✨ Bàn trống (Vòng mới) — Người tới lượt được ra bất kỳ bộ hợp lệ nào!</div>';
     } else {
       const trick = state.currentTrick;
+      const historyList = Array.isArray(state.tableHistory) ? state.tableHistory : [];
+      const prevTricks = historyList.length > 1 ? historyList.slice(0, historyList.length - 1) : [];
+
+      let historyHtml = '';
+      if (prevTricks.length > 0) {
+        const groups = prevTricks
+          .map((pt) => {
+            const miniCards = (pt.cards || [])
+              .map((c) => createCardElementHTML(c, false, true, true))
+              .join('');
+            return '<div class="trick-history-group" title="' + escapeHtml((pt.nickname || '') + ': ' + (pt.label || '')) + '">' + miniCards + '</div>';
+          })
+          .join('');
+        historyHtml = '<div class="trick-history-strip" aria-label="Các bộ bài đã đánh trước đó trong vòng">' + groups + '</div>';
+      }
+
       const cardsHtml = (trick.cards || [])
-        .map((card) => createCardElementHTML(card, false, true))
+        .map((card) => createCardElementHTML(card, false, true, false))
         .join('');
       trickZone.innerHTML =
+        historyHtml +
         '<div class="trick-meta">' +
         escapeHtml(trick.nickname) + ' vừa đánh: <strong>' + escapeHtml(trick.label) + '</strong>' +
         (trick.chopNote ? ' — <span>' + escapeHtml(trick.chopNote) + '</span>' : '') +
@@ -1376,9 +1721,14 @@
     updateSelectedComboHint(hand);
   }
 
-  function createCardElementHTML(card, isSelected, isTableCard) {
+  function createCardElementHTML(card, isSelected, isTableCard, isHistoryCard) {
     return (
-      '<div class="playing-card color-' + card.color + (isSelected ? ' selected' : '') + (isTableCard ? ' table-card' : '') + '">' +
+      '<div class="playing-card color-' +
+      card.color +
+      (isSelected ? ' selected' : '') +
+      (isTableCard ? ' table-card' : '') +
+      (isHistoryCard ? ' history-card' : '') +
+      '">' +
       '<div class="card-corner-top">' +
       '<span class="card-rank">' + escapeHtml(card.rank) + '</span>' +
       '<span class="card-suit-sm">' + escapeHtml(card.suitSymbol) + '</span>' +

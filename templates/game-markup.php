@@ -51,7 +51,7 @@ endif;
 
 			<div class="topbar-actions">
 				<button id="btnTestAlarm" type="button" class="btn btn-outline btn-sm" title="Nghe thử âm báo khi phòng đủ 4 người">
-					🔔 Nghe thử chuông đủ 4 người
+					🔔 Nghe thử chuông
 				</button>
 				<button id="btnToggleSound" type="button" class="btn btn-outline btn-sm" aria-pressed="false">
 					🔊 Âm thanh: BẬT
@@ -177,33 +177,59 @@ endif;
 
 		<!-- MÀN HÌNH 2: PHÒNG CHỜ & BÀN CHƠI TIẾN LÊN -->
 		<main id="roomView" class="room-container hidden">
-			<!-- Thanh công cụ của Phòng -->
+			<!-- Thanh nhắc chuyển sang nằm ngang khi đang cầm dọc trên điện thoại -->
+			<div id="portraitRotatePrompt" class="portrait-rotate-prompt hidden" role="region" aria-label="Gợi ý xoay ngang màn hình">
+				<span class="rotate-prompt-text">📱 Chuyển sang màn hình ngang để xem rộng đủ 4 người &amp; tay bài</span>
+				<div class="rotate-prompt-actions">
+					<button id="btnEnterLandscape" type="button" class="btn btn-gold btn-xs">
+						🔄 Xoay ngang
+					</button>
+					<button id="btnDismissRotatePrompt" type="button" class="btn btn-outline btn-xs" aria-label="Đóng thanh nhắc">
+						✕
+					</button>
+				</div>
+			</div>
+
+			<!-- Thanh công cụ gọn nhẹ của Phòng -->
 			<div class="room-toolbar">
 				<div class="room-meta">
-					<span class="room-code-badge">MÃ BÀN: #<strong id="lblRoomCode">----</strong></span>
+					<span class="room-code-badge">#<strong id="lblRoomCode">----</strong></span>
 					<span id="lblRoomName" class="room-name-text"></span>
 					<span id="lblRoundBadge" class="badge badge-subtle">Phòng chờ</span>
 				</div>
 
 				<div class="room-toolbar-buttons">
-					<button id="btnCopyInvite" type="button" class="btn btn-gold btn-sm">
-						📋 Copy Link Mời Bạn
+					<button id="btnToggleMic" type="button" class="btn btn-voice btn-sm" aria-pressed="false" title="Bật/Tắt Micro nói chuyện trực tiếp trong bàn">
+						🎤 Mic: TẮT
+					</button>
+					<button id="btnRoomToggleSound" type="button" class="btn btn-outline btn-sm" aria-pressed="false" title="Bật/Tắt toàn bộ âm thanh game và tiếng nói">
+						🔊 Âm thanh
+					</button>
+					<button id="btnToggleChatDrawer" type="button" class="btn btn-outline btn-sm btn-chat-toggle" aria-expanded="false" title="Mở khung trò chuyện &amp; cà khịa">
+						💬 Chat <span id="chatUnreadBadge" class="chat-unread-badge hidden">0</span>
+					</button>
+					
+					<button id="btnCopyInvite" type="button" class="btn btn-gold btn-sm" title="Copy đường link mời bạn bè vào bàn">
+						📋 Mời
 					</button>
 					<button id="btnNudgeRoom" type="button" class="btn btn-outline btn-sm" title="Phát âm thanh gõ bàn gọi đồng đội đang ẩn tab">
-						🔔 Gõ bàn gọi bạn
+						🔔
 					</button>
-					<button id="btnLeaveRoom" type="button" class="btn btn-danger btn-sm">
-						🚪 Rời bàn
+					<button id="btnToggleLandscape" type="button" class="btn btn-outline btn-sm btn-landscape-toggle" title="Chuyển chế độ nằm ngang / toàn màn hình">
+						📱 Ngang
+					</button>
+					<button id="btnLeaveRoom" type="button" class="btn btn-danger btn-sm" title="Rời khỏi bàn về sảnh">
+						🚪 Rời
 					</button>
 				</div>
 			</div>
 
-			<!-- BÀN BÀI 4 GHẾ -->
+			<!-- BÀN BÀI 4 GHẾ Ở 4 CẠNH MÀN HÌNH -->
 			<div class="poker-table">
-				<!-- Ghế đối diện (Top) -->
+				<!-- Ghế đối diện (Cạnh trên) -->
 				<div id="seatTop" class="seat-slot seat-top"></div>
 
-				<!-- Hàng giữa: Ghế Trái - Tâm Bàn - Ghế Phải -->
+				<!-- Hàng giữa: Ghế Trái - Tâm Bàn (Bài đã đánh) - Ghế Phải -->
 				<div class="table-middle-row">
 					<div id="seatLeft" class="seat-slot seat-left"></div>
 
@@ -220,9 +246,6 @@ endif;
 							</div>
 
 							<h3 id="waitingTitle" class="waiting-title">Đang tập hợp người chơi...</h3>
-							<p id="waitingInstruction" class="waiting-instruction">
-								Cần từ 2 đến 4 người chơi. Khi đủ 4 người vào phòng sẽ có chuông báo động tập hợp!
-							</p>
 
 							<!-- Bảng xếp hạng ván vừa kết thúc (nếu có) -->
 							<div id="rankingsBox" class="rankings-box hidden">
@@ -241,7 +264,7 @@ endif;
 							</div>
 						</div>
 
-						<!-- Khu vực hiển thị bài đánh ra khi đang PLAYING -->
+						<!-- Khu vực hiển thị các quân bài đã đánh ra khi đang PLAYING -->
 						<div id="playingCenterBox" class="playing-center-box hidden">
 							<div id="turnBanner" class="turn-banner">Đang chờ lượt...</div>
 							<div id="requiredCardHint" class="required-card-hint hidden"></div>
@@ -255,38 +278,45 @@ endif;
 					<div id="seatRight" class="seat-slot seat-right"></div>
 				</div>
 
-				<!-- Khu vực Người chơi chính (Bottom Seat + Bài trên tay) -->
+				<!-- Khu vực Người chơi chính (Cạnh dài bên dưới: Thông tin trái | Quạt bài giữa | Nút đánh bên phải trên mobile ngang) -->
 				<div class="my-player-area">
 					<div id="seatBottom" class="my-seat-header"></div>
 
+					<!-- Quạt bài 13 lá trên tay (1 hàng ngang gọn gàng) -->
+					<div id="myHandContainer" class="my-hand-container" role="region" aria-label="Bài trên tay của bạn"></div>
+
 					<!-- Thanh điều khiển đánh bài (Chỉ hiện khi đang trong ván PLAYING) -->
 					<div id="playControlsBar" class="play-controls-bar hidden">
-						<div id="selectedComboHint" class="combo-hint">Chọn các lá bài bên dưới để đánh</div>
+						<div id="selectedComboHint" class="combo-hint">Chọn bài để đánh</div>
 						<div class="play-action-buttons">
-							<button id="btnClearSelection" type="button" class="btn btn-outline btn-sm">
-								🧹 Bỏ chọn
-							</button>
-							<button id="btnPassTurn" type="button" class="btn btn-secondary">
+							<button id="btnPassTurn" type="button" class="btn btn-secondary btn-sm">
 								⏭️ Bỏ lượt
 							</button>
-							<button id="btnPlayCards" type="button" class="btn btn-primary btn-play-main">
+							<button id="btnPlayCards" type="button" class="btn btn-primary btn-play-main btn-sm">
 								🔥 ĐÁNH BÀI
 							</button>
 						</div>
 					</div>
-
-					<!-- Quạt bài 13 lá trên tay -->
-					<div id="myHandContainer" class="my-hand-container" role="region" aria-label="Bài trên tay của bạn"></div>
 				</div>
 			</div>
 
-			<!-- Hàng dưới: Khung Chat Trực Tiếp & Nhật ký bàn chơi -->
-			<div class="room-bottom-grid">
+			<!-- Nền mờ & Ngăn kéo Chat trên màn hình ngang/di động -->
+			<div id="chatDrawerBackdrop" class="chat-drawer-backdrop hidden" aria-hidden="true"></div>
+
+			<!-- Hàng dưới (PC) / Ngăn kéo trượt bên phải (Mobile & Landscape): Khung Chat -->
+			<div id="roomBottomDrawer" class="room-bottom-grid">
+				<div class="chat-drawer-header">
+					<span>💬 Trò chuyện trong bàn</span>
+					<button id="btnCloseChatDrawer" type="button" class="btn btn-outline btn-xs" aria-label="Đóng khung chat">
+						✕ Đóng
+					</button>
+				</div>
 				<!-- Khung Chat + Icon khuôn mặt + Nút cà khịa có giọng nói -->
 				<section class="room-chat-panel">
 					<div class="log-header">
 						<span>💬 Trò chuyện &amp; Cà khịa trong bàn</span>
-						<span class="chat-hint-sub">Bấm câu cà khịa để phát tiếng nói!</span>
+						<span id="spectatorBadge" class="spectator-badge hidden">👀 Khán giả: 0</span>
+						
 					</div>
 
 					<div id="chatMessagesList" class="chat-messages-list" role="log" aria-live="polite">
@@ -334,15 +364,6 @@ endif;
 							💬 Gửi
 						</button>
 					</div>
-				</section>
-
-				<!-- Khung Nhật ký bàn chơi & Danh sách khán giả -->
-				<section class="room-footer-log">
-					<div class="log-header">
-						<span>📜 Nhật ký bàn chơi</span>
-						<span id="spectatorBadge" class="spectator-badge hidden">👀 Khán giả: 0</span>
-					</div>
-					<div id="roomLogList" class="room-log-list"></div>
 				</section>
 			</div>
 		</main>

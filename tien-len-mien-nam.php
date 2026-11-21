@@ -3,7 +3,7 @@
  * Plugin Name:       Tiến Lên Miền Nam Nội Bộ
  * Plugin URI:        https://wordpress.org/
  * Description:       Game bài Tiến Lên Miền Nam Online nội bộ (2–4 người chơi), chạy thuần PHP + MySQL + REST API ngay trên WordPress không cần server Node.js.
- * Version:           1.2.4
+ * Version:           1.3.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Game Tiến Lên Nội Bộ
@@ -17,8 +17,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TLMN_VERSION', '1.2.4' );
-define( 'TLMN_DB_VERSION', '1.0.0' );
+define( 'TLMN_VERSION', '1.3.0' );
+define( 'TLMN_DB_VERSION', '1.1.0' );
 define( 'TLMN_PLUGIN_FILE', __FILE__ );
 define( 'TLMN_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'TLMN_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -34,6 +34,9 @@ class TLMN_Plugin {
 	const TEMPLATE_SLUG  = 'tlmn-fullscreen';
 	const PAGE_OPTION    = 'tlmn_game_page_id';
 	const ENABLED_OPTION = 'tlmn_game_enabled';
+	const TURN_URL_OPT   = 'tlmn_turn_url';
+	const TURN_USER_OPT  = 'tlmn_turn_user';
+	const TURN_PASS_OPT  = 'tlmn_turn_pass';
 
 	/**
 	 * Kiểm tra sảnh game có đang được Admin bật cho phép hiển thị hay không.
@@ -136,6 +139,36 @@ class TLMN_Plugin {
 	}
 
 	/**
+	 * Lấy danh sách ICE Servers (STUN mặc định + TURN tùy chọn) cho WebRTC Voice Chat.
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function get_ice_servers() {
+		$servers = array(
+			array( 'urls' => 'stun:stun.l.google.com:19302' ),
+			array( 'urls' => 'stun:stun1.l.google.com:19302' ),
+			array( 'urls' => 'stun:stun.cloudflare.com:3478' ),
+		);
+
+		$turn_url  = trim( (string) get_option( self::TURN_URL_OPT, '' ) );
+		$turn_user = trim( (string) get_option( self::TURN_USER_OPT, '' ) );
+		$turn_pass = trim( (string) get_option( self::TURN_PASS_OPT, '' ) );
+
+		if ( '' !== $turn_url ) {
+			$turn_entry = array( 'urls' => $turn_url );
+			if ( '' !== $turn_user ) {
+				$turn_entry['username'] = $turn_user;
+			}
+			if ( '' !== $turn_pass ) {
+				$turn_entry['credential'] = $turn_pass;
+			}
+			$servers[] = $turn_entry;
+		}
+
+		return $servers;
+	}
+
+	/**
 	 * Lấy cấu hình truyền xuống JavaScript frontend.
 	 *
 	 * @return array<string, mixed>
@@ -157,6 +190,7 @@ class TLMN_Plugin {
 			'wpUserName'  => $wp_user_name,
 			'pollRoomMs'  => 900,
 			'pollLobbyMs' => 2500,
+			'iceServers'  => self::get_ice_servers(),
 		);
 	}
 
@@ -236,9 +270,17 @@ class TLMN_Plugin {
 			);
 
 			wp_enqueue_script(
+				'tlmn-voice',
+				TLMN_PLUGIN_URL . 'assets/js/voice.js',
+				array(),
+				self::get_asset_version( 'assets/js/voice.js' ),
+				true
+			);
+
+			wp_enqueue_script(
 				'tlmn-app',
 				TLMN_PLUGIN_URL . 'assets/js/app.js',
-				array( 'tlmn-audio' ),
+				array( 'tlmn-audio', 'tlmn-voice' ),
 				self::get_asset_version( 'assets/js/app.js' ),
 				true
 			);
@@ -314,6 +356,14 @@ class TLMN_Plugin {
 			} elseif ( 'recreate_page' === $action ) {
 				$page_id = self::ensure_game_page_exists();
 				$notice  = $page_id > 0 ? 'Đã tạo lại trang chơi Tiến Lên Miền Nam thành công!' : 'Không thể tạo trang mới.';
+			} elseif ( 'save_turn' === $action ) {
+				$t_url  = isset( $_POST['tlmn_turn_url'] ) ? sanitize_text_field( wp_unslash( $_POST['tlmn_turn_url'] ) ) : '';
+				$t_user = isset( $_POST['tlmn_turn_user'] ) ? sanitize_text_field( wp_unslash( $_POST['tlmn_turn_user'] ) ) : '';
+				$t_pass = isset( $_POST['tlmn_turn_pass'] ) ? sanitize_text_field( wp_unslash( $_POST['tlmn_turn_pass'] ) ) : '';
+				update_option( self::TURN_URL_OPT, $t_url );
+				update_option( self::TURN_USER_OPT, $t_user );
+				update_option( self::TURN_PASS_OPT, $t_pass );
+				$notice = '🎙️ Đã lưu cấu hình TURN Server cho Voice Chat!';
 			}
 		}
 
@@ -321,6 +371,9 @@ class TLMN_Plugin {
 		$page_id      = (int) get_option( self::PAGE_OPTION, 0 );
 		$page_url     = ( $page_id > 0 && 'publish' === get_post_status( $page_id ) ) ? get_permalink( $page_id ) : '';
 		$active_rooms = TLMN_Storage::count_active_rooms();
+		$turn_url     = (string) get_option( self::TURN_URL_OPT, '' );
+		$turn_user    = (string) get_option( self::TURN_USER_OPT, '' );
+		$turn_pass    = (string) get_option( self::TURN_PASS_OPT, '' );
 		?>
 		<div class="wrap">
 			<h1>🃏 Tiến Lên Miền Nam Nội Bộ (2 – 4 người)</h1>
@@ -403,6 +456,21 @@ class TLMN_Plugin {
 						<button type="submit" class="button">🗑️ Đóng &amp; Xóa tất cả bàn hiện tại</button>
 					</form>
 				</div>
+			</div>
+
+			<div class="card" style="max-width: 720px; padding: 16px 20px; margin-top: 16px;">
+				<h2 style="margin-top: 0;">5. Voice Chat trực tiếp (STUN/TURN tùy chọn)</h2>
+				<p style="color: #4b5563;">
+					Mặc định Voice Chat dùng WebRTC P2P + Google/Cloudflare STUN miễn phí (chạy trực tiếp trên HTTPS không cần cấu hình thêm). Nếu người chơi dùng 4G/5G khác nhà mạng bị chặn NAT, bạn có thể điền thêm TURN Server (VD: Metered.ca hoặc Coturn) tại đây:
+				</p>
+				<form method="post" style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px; max-width: 520px;">
+					<?php wp_nonce_field( 'tlmn_admin_nonce', 'tlmn_nonce' ); ?>
+					<input type="hidden" name="tlmn_action" value="save_turn" />
+					<label><strong>TURN URL:</strong><br /><input type="text" name="tlmn_turn_url" value="<?php echo esc_attr( $turn_url ); ?>" placeholder="turn:standard.relay.metered.ca:80" style="width: 100%;" /></label>
+					<label><strong>TURN Username:</strong><br /><input type="text" name="tlmn_turn_user" value="<?php echo esc_attr( $turn_user ); ?>" placeholder="(Tùy chọn)" style="width: 100%;" /></label>
+					<label><strong>TURN Credential / Password:</strong><br /><input type="password" name="tlmn_turn_pass" value="<?php echo esc_attr( $turn_pass ); ?>" placeholder="(Tùy chọn)" style="width: 100%;" /></label>
+					<div><button type="submit" class="button button-primary">💾 Lưu cấu hình TURN</button></div>
+				</form>
 			</div>
 		</div>
 		<?php

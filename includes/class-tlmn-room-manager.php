@@ -76,6 +76,7 @@ class TLMN_Room_Manager {
 			'nickname'      => $clean_name,
 			'seatIndex'     => 0,
 			'ready'         => false,
+			'micOn'         => false,
 			'lastSeenAt'    => $now,
 			'hand'          => array(),
 			'passedInRound' => false,
@@ -383,6 +384,7 @@ class TLMN_Room_Manager {
 				'nickname'      => $clean_name,
 				'seatIndex'     => $seat_index,
 				'ready'         => false,
+				'micOn'         => false,
 				'lastSeenAt'    => $now,
 				'hand'          => array(),
 				'passedInRound' => false,
@@ -1473,6 +1475,79 @@ class TLMN_Room_Manager {
 	}
 
 	/**
+	 * Kiểm tra token có đang là người chơi hoặc khán giả trong phòng hay không.
+	 *
+	 * @param array<string, mixed> $room         Trạng thái phòng.
+	 * @param string               $player_token Token người gửi.
+	 * @return bool
+	 */
+	public static function is_member_of_room( array $room, $player_token ) {
+		if ( '' === (string) $player_token ) {
+			return false;
+		}
+		foreach ( $room['players'] as $p ) {
+			if ( isset( $p['playerToken'] ) && $p['playerToken'] === $player_token ) {
+				return true;
+			}
+		}
+		if ( ! empty( $room['spectators'] ) && is_array( $room['spectators'] ) ) {
+			foreach ( $room['spectators'] as $s ) {
+				if ( isset( $s['playerToken'] ) && $s['playerToken'] === $player_token ) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Cập nhật trạng thái bật/tắt micro của người chơi trong phòng.
+	 *
+	 * @param array<string, mixed> $room         Trạng thái phòng.
+	 * @param string               $player_token Token người chơi.
+	 * @param bool                 $mic_on       True nếu đang bật mic.
+	 * @return array<string, mixed>
+	 */
+	public static function set_player_mic_state( array &$room, $player_token, $mic_on ) {
+		$mic_bool = (bool) $mic_on;
+		foreach ( $room['players'] as &$p ) {
+			if ( $p['playerToken'] === $player_token ) {
+				$prev              = ! empty( $p['micOn'] );
+				$p['micOn']        = $mic_bool;
+				$p['lastSeenAt']   = time();
+				if ( $prev !== $mic_bool ) {
+					self::bump_version( $room );
+				}
+				return array(
+					'ok'      => true,
+					'micOn'   => $mic_bool,
+					'changed' => ( $prev !== $mic_bool ),
+				);
+			}
+		}
+		unset( $p );
+
+		if ( ! empty( $room['spectators'] ) && is_array( $room['spectators'] ) ) {
+			foreach ( $room['spectators'] as &$s ) {
+				if ( $s['playerToken'] === $player_token ) {
+					$s['lastSeenAt'] = time();
+					return array(
+						'ok'      => true,
+						'micOn'   => false,
+						'changed' => false,
+					);
+				}
+			}
+			unset( $s );
+		}
+
+		return array(
+			'ok'    => false,
+			'error' => 'Bạn không thuộc phòng chơi này',
+		);
+	}
+
+	/**
 	 * Tạo payload trạng thái cá nhân hóa cho 1 người chơi (ẩn bài đối thủ).
 	 *
 	 * @param array<string, mixed> $room           Trạng thái phòng.
@@ -1498,6 +1573,7 @@ class TLMN_Room_Manager {
 				'seatIndex'     => (int) $p['seatIndex'],
 				'isHost'        => ( $p['playerToken'] === $room['hostToken'] ),
 				'ready'         => ! empty( $p['ready'] ),
+				'micOn'         => ! empty( $p['micOn'] ),
 				'online'        => $online,
 				'cardCount'     => count( $p['hand'] ),
 				'passedInRound' => ! empty( $p['passedInRound'] ),
@@ -1747,6 +1823,7 @@ class TLMN_Room_Manager {
 				'nickname'      => $spec['nickname'],
 				'seatIndex'     => $seat_index,
 				'ready'         => false,
+				'micOn'         => false,
 				'lastSeenAt'    => $spec['lastSeenAt'],
 				'hand'          => array(),
 				'passedInRound' => false,

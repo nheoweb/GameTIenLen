@@ -128,6 +128,36 @@ class TLMN_Rest_Api {
 				'permission_callback' => '__return_true',
 			)
 		);
+
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/rooms/(?P<room_id>\d{4})/voice/signal',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( __CLASS__, 'handle_voice_signal' ),
+				'permission_callback' => '__return_true',
+			)
+		);
+
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/rooms/(?P<room_id>\d{4})/voice/poll',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( __CLASS__, 'handle_voice_poll' ),
+				'permission_callback' => '__return_true',
+			)
+		);
+
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/rooms/(?P<room_id>\d{4})/voice/state',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( __CLASS__, 'handle_voice_state' ),
+				'permission_callback' => '__return_true',
+			)
+		);
 	}
 
 	/**
@@ -713,6 +743,175 @@ class TLMN_Rest_Api {
 
 				TLMN_Storage::save_room( $room );
 				$res['state'] = TLMN_Room_Manager::build_client_state( $room, $player_token, $since_ev );
+				return $res;
+			}
+		);
+
+		return self::json_response( $result );
+	}
+
+	/**
+	 * POST /rooms/{room_id}/voice/signal — Gửi tín hiệu WebRTC (offer/answer/ice/hello/bye/mic_state).
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public static function handle_voice_signal( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
+
+		$room_id      = (string) $request->get_param( 'room_id' );
+		$payload      = self::get_payload( $request );
+		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
+		$raw_to       = isset( $payload['toToken'] ) ? trim( (string) $payload['toToken'] ) : '*';
+		$to_token     = ( '*' === $raw_to ) ? '*' : TLMN_Room_Manager::sanitize_token( $raw_to );
+		$signal_type  = isset( $payload['signalType'] ) ? strtolower( trim( (string) $payload['signalType'] ) ) : '';
+		$signal_data  = isset( $payload['data'] ) ? $payload['data'] : null;
+
+		$allowed_types = array( 'offer', 'answer', 'ice', 'hello', 'bye', 'mic_state' );
+		if ( strlen( $player_token ) < 4 || '' === $to_token || ! in_array( $signal_type, $allowed_types, true ) ) {
+			return self::json_response(
+				array(
+					'ok'    => false,
+					'error' => 'Tín hiệu voice không hợp lệ',
+				),
+				400
+			);
+		}
+
+		$room = TLMN_Storage::get_room( $room_id );
+		if ( ! $room ) {
+			return self::json_response(
+				array(
+					'ok'      => false,
+					'deleted' => true,
+					'error'   => 'Phòng đã đóng hoặc không tồn tại',
+				)
+			);
+		}
+
+		if ( ! TLMN_Room_Manager::is_member_of_room( $room, $player_token ) ) {
+			return self::json_response(
+				array(
+					'ok'    => false,
+					'error' => 'Bạn không thuộc phòng chơi này',
+				),
+				403
+			);
+		}
+
+		$encoded = wp_json_encode( $signal_data );
+		if ( false === $encoded || strlen( $encoded ) > 32768 ) {
+			return self::json_response(
+				array(
+					'ok'    => false,
+					'error' => 'Dữ liệu tín hiệu vượt quá giới hạn cho phép',
+				),
+				400
+			);
+		}
+
+		$signal_id = TLMN_Storage::insert_voice_signal( $room_id, $player_token, $to_token, $signal_type, $encoded );
+
+		return self::json_response(
+			array(
+				'ok'       => $signal_id > 0,
+				'signalId' => $signal_id,
+			)
+		);
+	}
+
+	/**
+	 * GET /rooms/{room_id}/voice/poll — Nhận các tín hiệu WebRTC mới dành cho người chơi.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public static function handle_voice_poll( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
+
+		$room_id      = (string) $request->get_param( 'room_id' );
+		$player_token = TLMN_Room_Manager::sanitize_token( $request->get_param( 'token' ) );
+		$after_id     = (int) $request->get_param( 'afterId' );
+
+		if ( strlen( $player_token ) < 4 ) {
+			return self::json_response(
+				array(
+					'ok'    => false,
+					'error' => 'Thiếu token người chơi',
+				),
+				400
+			);
+		}
+
+		$meta = TLMN_Storage::get_room_meta( $room_id );
+		if ( ! $meta ) {
+			return self::json_response(
+				array(
+					'ok'      => false,
+					'deleted' => true,
+					'error'   => 'Phòng đã đóng hoặc không tồn tại',
+				)
+			);
+		}
+
+		$res = TLMN_Storage::get_voice_signals( $room_id, $player_token, $after_id, 50 );
+
+		return self::json_response(
+			array(
+				'ok'       => true,
+				'signals'  => $res['signals'],
+				'latestId' => $res['latestId'],
+			)
+		);
+	}
+
+	/**
+	 * POST /rooms/{room_id}/voice/state — Cập nhật trạng thái bật/tắt micro của người chơi.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response
+	 */
+	public static function handle_voice_state( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
+
+		$room_id      = (string) $request->get_param( 'room_id' );
+		$payload      = self::get_payload( $request );
+		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
+		$mic_on       = ! empty( $payload['micOn'] );
+
+		if ( strlen( $player_token ) < 4 ) {
+			return self::json_response(
+				array(
+					'ok'    => false,
+					'error' => 'Thiếu token người chơi',
+				),
+				400
+			);
+		}
+
+		$result = TLMN_Storage::with_room_lock(
+			$room_id,
+			function () use ( $room_id, $player_token, $mic_on ) {
+				$room = TLMN_Storage::get_room( $room_id );
+				if ( ! $room ) {
+					return array(
+						'ok'      => false,
+						'deleted' => true,
+						'error'   => 'Không tìm thấy phòng',
+					);
+				}
+
+				$res = TLMN_Room_Manager::set_player_mic_state( $room, $player_token, $mic_on );
+				if ( ! empty( $res['ok'] ) && ! empty( $res['changed'] ) ) {
+					TLMN_Storage::save_room( $room );
+				}
+
 				return $res;
 			}
 		);

@@ -25,6 +25,16 @@ class TLMN_Storage {
 	}
 
 	/**
+	 * Tên bảng tín hiệu WebRTC Voice Chat kèm prefix WordPress.
+	 *
+	 * @return string
+	 */
+	public static function signals_table_name() {
+		global $wpdb;
+		return $wpdb->prefix . 'tien_len_voice_signals';
+	}
+
+	/**
 	 * Tạo bảng MySQL khi kích hoạt plugin.
 	 *
 	 * @return void
@@ -32,6 +42,7 @@ class TLMN_Storage {
 	public static function create_table() {
 		global $wpdb;
 		$table_name      = self::table_name();
+		$signals_table   = self::signals_table_name();
 		$charset_collate = $wpdb->get_charset_collate();
 
 		$sql = "CREATE TABLE {$table_name} (
@@ -44,8 +55,22 @@ class TLMN_Storage {
 			KEY idx_updated_at (updated_at)
 		) {$charset_collate};";
 
+		$sql_signals = "CREATE TABLE {$signals_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			room_id varchar(8) NOT NULL,
+			from_token varchar(64) NOT NULL,
+			to_token varchar(64) NOT NULL,
+			signal_type varchar(20) NOT NULL,
+			payload longtext NOT NULL,
+			created_at bigint(20) unsigned NOT NULL DEFAULT 0,
+			PRIMARY KEY  (id),
+			KEY idx_room_to_id (room_id, to_token, id),
+			KEY idx_created_at (created_at)
+		) {$charset_collate};";
+
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
+		dbDelta( $sql_signals );
 	}
 
 	/**
@@ -55,9 +80,12 @@ class TLMN_Storage {
 	 */
 	public static function drop_table() {
 		global $wpdb;
-		$table_name = self::table_name();
+		$table_name    = self::table_name();
+		$signals_table = self::signals_table_name();
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$wpdb->query( "DROP TABLE IF EXISTS {$table_name}" );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$wpdb->query( "DROP TABLE IF EXISTS {$signals_table}" );
 	}
 
 	/**
@@ -185,6 +213,124 @@ class TLMN_Storage {
 			array( 'room_id' => (string) $room_id ),
 			array( '%s' )
 		);
+		self::delete_room_signals( $room_id );
+	}
+
+	/**
+	 * Lưu 1 tín hiệu WebRTC Voice Chat (offer / answer / ice / hello / bye / mic_state).
+	 *
+	 * @param string $room_id      Mã phòng.
+	 * @param string $from_token   Token người gửi.
+	 * @param string $to_token     Token người nhận (hoặc '*' cho cả phòng).
+	 * @param string $signal_type  Loại tín hiệu.
+	 * @param string $payload_json Chuỗi JSON dữ liệu tín hiệu.
+	 * @return int ID bản ghi vừa thêm (0 nếu thất bại).
+	 */
+	public static function insert_voice_signal( $room_id, $from_token, $to_token, $signal_type, $payload_json ) {
+		global $wpdb;
+		$table = self::signals_table_name();
+		$now   = time();
+
+		// Tự dọn các tín hiệu quá 90 giây để bảng luôn siêu nhẹ.
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$wpdb->query(
+			$wpdb->prepare( "DELETE FROM {$table} WHERE created_at < %d", $now - 90 )
+		);
+
+		$ok = $wpdb->insert(
+			$table,
+			array(
+				'room_id'     => (string) $room_id,
+				'from_token'  => (string) $from_token,
+				'to_token'    => (string) $to_token,
+				'signal_type' => (string) $signal_type,
+				'payload'     => (string) $payload_json,
+				'created_at'  => $now,
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%d' )
+		);
+
+		return false !== $ok ? (int) $wpdb->insert_id : 0;
+	}
+
+	/**
+	 * Đọc các tín hiệu WebRTC mới dành cho 1 người chơi trong phòng.
+	 *
+	 * @param string $room_id      Mã phòng.
+	 * @param string $viewer_token Token người nhận.
+	 * @param int    $after_id     Chỉ lấy bản ghi có id > after_id.
+	 * @param int    $limit        Số bản ghi tối đa.
+	 * @return array<string, mixed>
+	 */
+	public static function get_voice_signals( $room_id, $viewer_token, $after_id = 0, $limit = 50 ) {
+		global $wpdb;
+		$table     = self::signals_table_name();
+		$after_id  = max( 0, (int) $after_id );
+		$limit     = max( 1, min( 100, (int) $limit ) );
+		$min_time  = time() - 45;
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT id, from_token, to_token, signal_type, payload, created_at
+				FROM {$table}
+				WHERE room_id = %s
+				  AND id > %d
+				  AND created_at >= %d
+				  AND from_token <> %s
+				  AND (to_token = %s OR to_token = '*')
+				ORDER BY id ASC
+				LIMIT %d",
+				(string) $room_id,
+				$after_id,
+				$min_time,
+				(string) $viewer_token,
+				(string) $viewer_token,
+				$limit
+			),
+			ARRAY_A
+		);
+
+		$signals   = array();
+		$latest_id = $after_id;
+
+		if ( is_array( $rows ) ) {
+			foreach ( $rows as $row ) {
+				$sid = (int) $row['id'];
+				if ( $sid > $latest_id ) {
+					$latest_id = $sid;
+				}
+				$decoded_payload = json_decode( (string) $row['payload'], true );
+				$signals[]       = array(
+					'id'         => $sid,
+					'fromToken'  => (string) $row['from_token'],
+					'toToken'    => (string) $row['to_token'],
+					'signalType' => (string) $row['signal_type'],
+					'payload'    => is_array( $decoded_payload ) ? $decoded_payload : null,
+					'createdAt'  => (int) $row['created_at'],
+				);
+			}
+		}
+
+		return array(
+			'signals'  => $signals,
+			'latestId' => $latest_id,
+		);
+	}
+
+	/**
+	 * Xóa toàn bộ tín hiệu WebRTC của 1 phòng.
+	 *
+	 * @param string $room_id Mã phòng.
+	 * @return void
+	 */
+	public static function delete_room_signals( $room_id ) {
+		global $wpdb;
+		$wpdb->delete(
+			self::signals_table_name(),
+			array( 'room_id' => (string) $room_id ),
+			array( '%s' )
+		);
 	}
 
 	/**
@@ -295,6 +441,13 @@ class TLMN_Storage {
 		$deleted = $wpdb->query(
 			$wpdb->prepare( "DELETE FROM {$table} WHERE updated_at < %d", $cutoff )
 		);
+
+		$signals_table = self::signals_table_name();
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$wpdb->query(
+			$wpdb->prepare( "DELETE FROM {$signals_table} WHERE created_at < %d", time() - 120 )
+		);
+
 		return (int) $deleted;
 	}
 

@@ -24,13 +24,14 @@ if ( ! headers_sent() ) {
 $tlmn_config    = TLMN_Plugin::get_frontend_config();
 $tlmn_css_ver   = TLMN_Plugin::get_asset_version( 'assets/css/tien-len.css' );
 $tlmn_audio_ver = TLMN_Plugin::get_asset_version( 'assets/js/audio.js' );
+$tlmn_voice_ver = TLMN_Plugin::get_asset_version( 'assets/js/voice.js' );
 $tlmn_app_ver   = TLMN_Plugin::get_asset_version( 'assets/js/app.js' );
 ?>
 <!DOCTYPE html>
 <html <?php language_attributes(); ?>>
 <head>
 	<meta charset="<?php bloginfo( 'charset' ); ?>" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 	<title>Phòng RD - Tiến Lên Miền Nam</title>
 	<meta property="og:type" content="website" />
 	<meta property="og:title" content="Phòng RD - Tiến Lên Miền Nam" />
@@ -48,6 +49,7 @@ $tlmn_app_ver   = TLMN_Plugin::get_asset_version( 'assets/js/app.js' );
 			window.TLMN_CONFIG = <?php echo wp_json_encode( $tlmn_config ); ?>;
 		</script>
 		<script src="<?php echo esc_url( TLMN_PLUGIN_URL . 'assets/js/audio.js?ver=' . rawurlencode( $tlmn_audio_ver ) ); ?>"></script>
+		<script src="<?php echo esc_url( TLMN_PLUGIN_URL . 'assets/js/voice.js?ver=' . rawurlencode( $tlmn_voice_ver ) ); ?>"></script>
 		<script src="<?php echo esc_url( TLMN_PLUGIN_URL . 'assets/js/app.js?ver=' . rawurlencode( $tlmn_app_ver ) ); ?>"></script>
 	<?php endif; ?>
 </body>
