@@ -3,7 +3,7 @@
  * Plugin Name:       Tiến Lên Miền Nam Nội Bộ
  * Plugin URI:        https://wordpress.org/
  * Description:       Game bài Tiến Lên Miền Nam Online nội bộ (2–4 người chơi), chạy thuần PHP + MySQL + REST API ngay trên WordPress không cần server Node.js.
- * Version:           1.2.0
+ * Version:           1.2.1
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Game Tiến Lên Nội Bộ
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TLMN_VERSION', '1.2.0' );
+define( 'TLMN_VERSION', '1.2.1' );
 define( 'TLMN_DB_VERSION', '1.0.0' );
 define( 'TLMN_PLUGIN_FILE', __FILE__ );
 define( 'TLMN_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );

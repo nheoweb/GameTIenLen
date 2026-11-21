@@ -294,9 +294,11 @@ class TLMN_Room_Manager {
 				$alert_event = self::push_event(
 					$room,
 					array(
-						'type'     => 'ROOM_FULL_4',
-						'nickname' => $clean_name,
-						'message'  => '🔔 ĐỦ 4/4 CHÂN RỒI! (' . $clean_name . ' vừa vào). Tất cả bấm Sẵn sàng để tự động chia bài!',
+						'type'        => 'ROOM_FULL_4',
+						'playerToken' => $player_token,
+						'nickname'    => $clean_name,
+						'playerCount' => count( $room['players'] ),
+						'message'     => '🔔 ĐỦ 4/4 CHÂN RỒI! (' . $clean_name . ' vừa vào). Tất cả bấm Sẵn sàng để tự động chia bài!',
 					)
 				);
 			} else {
@@ -304,9 +306,11 @@ class TLMN_Room_Manager {
 				$alert_event = self::push_event(
 					$room,
 					array(
-						'type'     => 'PLAYER_JOINED',
-						'nickname' => $clean_name,
-						'message'  => '👋 ' . $clean_name . ' vừa vào bàn!',
+						'type'        => 'PLAYER_JOINED',
+						'playerToken' => $player_token,
+						'nickname'    => $clean_name,
+						'playerCount' => count( $room['players'] ),
+						'message'     => '👋 ' . $clean_name . ' vừa vào bàn (' . count( $room['players'] ) . '/4 người)!',
 					)
 				);
 			}

@@ -534,6 +534,10 @@
     lobbyView.classList.add('hidden');
     roomView.classList.remove('hidden');
 
+    if (soundManager && typeof soundManager.setRoomKeepAlive === 'function') {
+      soundManager.setRoomKeepAlive(true);
+    }
+
     if (initialState) {
       applyRoomState(initialState, false);
     }
@@ -551,6 +555,9 @@
     lastSeenEventId = 0;
     lastCountdownSeconds = null;
     selectedCardIds.clear();
+    if (soundManager && typeof soundManager.setRoomKeepAlive === 'function') {
+      soundManager.setRoomKeepAlive(false);
+    }
     setUrlRoomParam(null);
     roomView.classList.add('hidden');
     lobbyView.classList.remove('hidden');
@@ -891,9 +898,30 @@
           );
         }
         showAlertBanner(alert.message, 8000);
+        showBanterCallout('🔔 ĐỦ 4/4 CHÂN', alert.message || 'Bấm Sẵn sàng để chia bài ngay!', 5500);
         break;
 
       case 'PLAYER_JOINED':
+        if (alert.playerToken && alert.playerToken === playerToken) {
+          if (soundManager) soundManager.playJoinSound();
+        } else {
+          if (soundManager) {
+            if (typeof soundManager.playIncomingPlayerAlert === 'function') {
+              soundManager.playIncomingPlayerAlert(alert.nickname, alert.playerCount);
+            } else {
+              soundManager.playJoinSound();
+            }
+            soundManager.triggerUrgentTabAlert(
+              '🔔 [' + (alert.nickname || 'NGƯỜI MỚI') + ' VÀO BÀN!]',
+              '🃏 Bàn #' + currentRoomId + ' có người mới vào!',
+              alert.message || 'Vào bàn bấm Sẵn sàng để chia bài!'
+            );
+          }
+          showBanterCallout('👋 Có người vào bàn', alert.message || ((alert.nickname || 'Đồng đội') + ' vừa vào bàn!'), 5000);
+        }
+        showAlertBanner(alert.message, 5500);
+        break;
+
       case 'SPECTATOR_JOINED':
         if (soundManager) soundManager.playJoinSound();
         showAlertBanner(alert.message, 4000);

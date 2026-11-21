@@ -20,6 +20,9 @@
       this.htmlAudioUnlocked = false;
       this.preloadedStarted = false;
       this.sharedVoiceAudio = null;
+      this.wakeLockSentinel = null;
+      this.keepAliveActive = false;
+      this.keepAliveTimer = null;
 
       if (typeof window.Audio !== 'undefined') {
         try {
@@ -32,12 +35,23 @@
         }
       }
 
-      window.addEventListener('focus', () => this.stopTabFlashing());
+      window.addEventListener('focus', () => {
+        this.stopTabFlashing();
+        if (this.ctx && (this.ctx.state === 'suspended' || this.ctx.state === 'interrupted')) {
+          this.ctx.resume().catch(() => {});
+        }
+        if (this.keepAliveActive) {
+          this._requestWakeLock();
+        }
+      });
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
           this.stopTabFlashing();
           if (this.ctx && (this.ctx.state === 'suspended' || this.ctx.state === 'interrupted')) {
             this.ctx.resume().catch(() => {});
+          }
+          if (this.keepAliveActive) {
+            this._requestWakeLock();
           }
         }
       });
@@ -189,8 +203,11 @@
       if (!cfg.audioBase) return;
       this.preloadedStarted = true;
 
-      // Ưu tiên nạp trước 6 câu cà khịa trên thanh bấm nhanh cho mobile
+      // Ưu tiên nạp trước các âm báo có người vào phòng & 6 câu cà khịa trên thanh bấm nhanh cho mobile
       const priorityClips = [
+        'player_join.mp3',
+        'room_full.mp3',
+        'nudge_1.mp3',
         'counter_1.mp3',
         'followup_1.mp3',
         'quick_warn.mp3',
@@ -282,6 +299,78 @@
           this._initSpeechVoices();
         } catch (e) {
           // Bỏ qua
+        }
+      }
+
+      if (this.keepAliveActive) {
+        this._requestWakeLock();
+      }
+    }
+
+    /**
+     * Giữ màn hình điện thoại không tự tắt (Screen Wake Lock) và giữ AudioContext luôn sống
+     * khi người tạo bàn để điện thoại trên bàn chờ bạn bè bấm link vào phòng.
+     */
+    setRoomKeepAlive(active) {
+      this.keepAliveActive = Boolean(active);
+      if (this.keepAliveTimer) {
+        clearInterval(this.keepAliveTimer);
+        this.keepAliveTimer = null;
+      }
+
+      if (this.keepAliveActive) {
+        this._requestWakeLock();
+        this.keepAliveTimer = setInterval(() => {
+          if (!this.keepAliveActive || this.muted) return;
+          const ctx = this.initContext();
+          if (ctx && ctx.state === 'running') {
+            try {
+              const buf = ctx.createBuffer(1, 1, 22050);
+              const src = ctx.createBufferSource();
+              src.buffer = buf;
+              src.connect(ctx.destination);
+              src.start(0);
+            } catch (e) {
+              // Bỏ qua
+            }
+          }
+        }, 12000);
+      } else {
+        this._releaseWakeLock();
+      }
+    }
+
+    _requestWakeLock() {
+      if (!this.keepAliveActive || document.hidden) return;
+      if (this.wakeLockSentinel && !this.wakeLockSentinel.released) return;
+      if (navigator.wakeLock && typeof navigator.wakeLock.request === 'function') {
+        navigator.wakeLock
+          .request('screen')
+          .then((sentinel) => {
+            this.wakeLockSentinel = sentinel;
+          })
+          .catch(() => {});
+      }
+    }
+
+    _releaseWakeLock() {
+      if (this.wakeLockSentinel) {
+        try {
+          this.wakeLockSentinel.release().catch(() => {});
+        } catch (e) {
+          // Bỏ qua
+        }
+        this.wakeLockSentinel = null;
+      }
+    }
+
+    vibrateDevice(pattern) {
+      if (this.muted) return;
+      if (navigator && typeof navigator.vibrate === 'function') {
+        try {
+          navigator.vibrate(pattern || [200, 100, 250]);
+        } catch (e) {
+          // Bỏ qua nếu trình duyệt không hỗ trợ rung
         }
       }
     }
@@ -621,11 +710,47 @@
     }
 
     playJoinSound() {
-      this._playTone({ freq: 587.33, type: 'sine', startOffset: 0, duration: 0.16, gain: 0.2 });
-      this._playTone({ freq: 880.0, type: 'triangle', startOffset: 0.14, duration: 0.28, gain: 0.25 });
+      this._playTone({ freq: 587.33, type: 'sine', startOffset: 0, duration: 0.16, gain: 0.22 });
+      this._playTone({ freq: 880.0, type: 'triangle', startOffset: 0.14, duration: 0.28, gain: 0.26 });
+    }
+
+    /**
+     * Chuông báo + Rung + Giọng nói tự động gọi chủ bàn khi để điện thoại đó và có người mới bấm link vào bàn
+     */
+    playIncomingPlayerAlert(nickname, playerCount) {
+      if (this.muted) return;
+
+      // 1. Rung điện thoại (Android / Oppo)
+      this.vibrateDevice([220, 100, 260, 100, 320]);
+
+      // 2. Chuông cửa 4 nhịp vang rõ (Ding-Dong-Ding-Dong)
+      const chimes = [
+        { freq: 783.99, start: 0, dur: 0.16, gain: 0.36 },
+        { freq: 987.77, start: 0.15, dur: 0.18, gain: 0.38 },
+        { freq: 1174.66, start: 0.33, dur: 0.18, gain: 0.4 },
+        { freq: 1567.98, start: 0.5, dur: 0.35, gain: 0.42 },
+      ];
+      chimes.forEach((n) => {
+        this._playTone({
+          freq: n.freq,
+          type: 'triangle',
+          startOffset: n.start,
+          duration: n.dur,
+          gain: n.gain,
+        });
+      });
+
+      // 3. Phát giọng nói thông báo "Ting ting! Có đồng đội mới vô bàn kìa!"
+      const voiceText =
+        (nickname ? nickname + ' vừa vô bàn kìa! ' : 'Có đồng đội mới vô bàn kìa! ') +
+        'Vào bấm sẵn sàng chia bài nghen!';
+      this.speakBanter(voiceText, null, 'player_join.mp3');
     }
 
     playRoomFullAlarm() {
+      if (this.muted) return;
+      this.vibrateDevice([300, 120, 300, 120, 420]);
+
       const bellNotes = [0, 0.11, 0.22, 0.33];
       bellNotes.forEach((offset, idx) => {
         this._playTone({
@@ -662,9 +787,14 @@
           gain: n.gain,
         });
       });
+
+      this.speakBanter('Đủ bốn chân rồi anh em ơi! Bấm sẵn sàng chia bài liền nè!', null, 'room_full.mp3');
     }
 
     playNudgeSound() {
+      if (this.muted) return;
+      this.vibrateDevice([200, 80, 200, 80, 300]);
+
       [0, 0.14, 0.28].forEach((offset) => {
         this._playTone({
           freq: 320,
@@ -677,6 +807,8 @@
       });
       this._playTone({ freq: 987.77, type: 'triangle', startOffset: 0.45, duration: 0.15, gain: 0.35 });
       this._playTone({ freq: 1318.51, type: 'triangle', startOffset: 0.62, duration: 0.3, gain: 0.38 });
+
+      this.speakBanter('Alo alo! Vô bàn bấm sẵn sàng đánh bài lẹ đi bồ ơi!', null, 'nudge_1.mp3');
     }
 
     playCountdownBeep(secondsLeft) {
