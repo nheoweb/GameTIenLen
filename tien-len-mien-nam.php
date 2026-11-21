@@ -3,7 +3,7 @@
  * Plugin Name:       Tiến Lên Miền Nam Nội Bộ
  * Plugin URI:        https://wordpress.org/
  * Description:       Game bài Tiến Lên Miền Nam Online nội bộ (2–4 người chơi), chạy thuần PHP + MySQL + REST API ngay trên WordPress không cần server Node.js.
- * Version:           1.1.0
+ * Version:           1.1.1
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Game Tiến Lên Nội Bộ
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TLMN_VERSION', '1.1.0' );
+define( 'TLMN_VERSION', '1.1.1' );
 define( 'TLMN_DB_VERSION', '1.0.0' );
 define( 'TLMN_PLUGIN_FILE', __FILE__ );
 define( 'TLMN_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
@@ -242,17 +242,19 @@ class TLMN_Plugin {
 	}
 
 	/**
-	 * Đăng ký trang quản lý nhanh dưới menu Cài đặt (Settings).
+	 * Đăng ký menu cấp cao nhất (Top-level Menu) riêng biệt trên thanh bên WP Admin.
 	 *
 	 * @return void
 	 */
 	public static function register_admin_menu() {
-		add_options_page(
+		add_menu_page(
 			'Tiến Lên Miền Nam',
-			'Tiến Lên Miền Nam',
+			'Tiến Lên Game',
 			'manage_options',
 			'tien-len-mien-nam',
-			array( __CLASS__, 'render_admin_page' )
+			array( __CLASS__, 'render_admin_page' ),
+			'dashicons-games',
+			31
 		);
 	}
 
@@ -263,7 +265,7 @@ class TLMN_Plugin {
 	 * @return array<int, string>
 	 */
 	public static function add_plugin_action_links( $links ) {
-		$settings_url = admin_url( 'options-general.php?page=tien-len-mien-nam' );
+		$settings_url = admin_url( 'admin.php?page=tien-len-mien-nam' );
 		array_unshift(
 			$links,
 			'<a href="' . esc_url( $settings_url ) . '"><strong>Link chơi &amp; Cài đặt</strong></a>'

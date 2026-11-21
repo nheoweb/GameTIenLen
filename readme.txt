@@ -4,7 +4,7 @@ Tags: card game, tien len, multiplayer, game
 Requires at least: 5.8
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.1.1
 License: GPLv2 or later
 
 Game bài Tiến Lên Miền Nam Online nội bộ (2–4 người chơi), chạy thuần PHP + MySQL + REST API ngay trên hosting WordPress.
@@ -26,7 +26,7 @@ Tính năng nổi bật:
 
 1. Trong WordPress Admin, vào **Plugins → Add New → Upload Plugin**.
 2. Chọn file `tien-len-mien-nam.zip`, bấm **Install Now** rồi bấm **Activate**.
-3. Vào **Settings → Tiến Lên Miền Nam** để lấy ngay đường link sảnh chơi (mặc định là `https://ten-mien-cua-ban/tien-len/`) gửi cho bạn bè.
+3. Bấm vào menu riêng **Tiến Lên Game** trên thanh menu trái của WP Admin để lấy ngay đường link sảnh chơi (mặc định là `https://ten-mien-cua-ban/tien-len/`) gửi cho bạn bè.
 
 == Shortcodes ==
 
