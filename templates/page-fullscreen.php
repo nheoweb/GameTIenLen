@@ -39,10 +39,12 @@ $tlmn_app_ver   = TLMN_Plugin::get_asset_version( 'assets/js/app.js' );
 	$tlmn_is_fullscreen = true;
 	require TLMN_PLUGIN_PATH . 'templates/game-markup.php';
 	?>
-	<script>
-		window.TLMN_CONFIG = <?php echo wp_json_encode( $tlmn_config ); ?>;
-	</script>
-	<script src="<?php echo esc_url( TLMN_PLUGIN_URL . 'assets/js/audio.js?ver=' . rawurlencode( $tlmn_audio_ver ) ); ?>"></script>
-	<script src="<?php echo esc_url( TLMN_PLUGIN_URL . 'assets/js/app.js?ver=' . rawurlencode( $tlmn_app_ver ) ); ?>"></script>
+	<?php if ( TLMN_Plugin::is_game_enabled() ) : ?>
+		<script>
+			window.TLMN_CONFIG = <?php echo wp_json_encode( $tlmn_config ); ?>;
+		</script>
+		<script src="<?php echo esc_url( TLMN_PLUGIN_URL . 'assets/js/audio.js?ver=' . rawurlencode( $tlmn_audio_ver ) ); ?>"></script>
+		<script src="<?php echo esc_url( TLMN_PLUGIN_URL . 'assets/js/app.js?ver=' . rawurlencode( $tlmn_app_ver ) ); ?>"></script>
+	<?php endif; ?>
 </body>
 </html>

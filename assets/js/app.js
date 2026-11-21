@@ -67,6 +67,10 @@
   const inputRoomCode = $('inputRoomCode');
   const btnCreateRoom = $('btnCreateRoom');
   const btnJoinByCode = $('btnJoinByCode');
+  const tabJoinRoom = $('tabJoinRoom');
+  const tabCreateRoom = $('tabCreateRoom');
+  const panelJoinRoom = $('panelJoinRoom');
+  const panelCreateRoom = $('panelCreateRoom');
   const lobbyRoomsList = $('lobbyRoomsList');
   const lobbyCountBadge = $('lobbyCountBadge');
   const shareLobbyUrlText = $('shareLobbyUrlText');
@@ -327,6 +331,10 @@
       try {
         const res = await apiGet('/lobby');
         if (myGen !== pollGeneration || currentRoomId) return;
+        if (res && res.disabled) {
+          window.location.reload();
+          return;
+        }
         if (res && res.ok && Array.isArray(res.rooms)) {
           renderLobbyRooms(res.rooms);
         }
@@ -361,6 +369,11 @@
         });
 
         if (myGen !== pollGeneration || currentRoomId !== roomIdSnapshot) return;
+
+        if (res && res.disabled) {
+          window.location.reload();
+          return;
+        }
 
         if (res && res.deleted) {
           showAlertBanner('ℹ️ Bàn chơi đã đóng, đưa bạn về sảnh chờ.');
@@ -400,7 +413,45 @@
     }
   });
 
-  // ==================== ROOM ACTIONS ====================
+  // ==================== LOBBY TABS & ROOM ACTIONS ====================
+
+  function switchLobbyTab(mode) {
+    const isCreate = mode === 'create';
+    if (tabJoinRoom) {
+      tabJoinRoom.classList.toggle('active', !isCreate);
+      tabJoinRoom.setAttribute('aria-selected', isCreate ? 'false' : 'true');
+    }
+    if (tabCreateRoom) {
+      tabCreateRoom.classList.toggle('active', isCreate);
+      tabCreateRoom.setAttribute('aria-selected', isCreate ? 'true' : 'false');
+    }
+    if (panelJoinRoom) {
+      panelJoinRoom.classList.toggle('hidden', isCreate);
+    }
+    if (panelCreateRoom) {
+      panelCreateRoom.classList.toggle('hidden', !isCreate);
+    }
+  }
+
+  if (tabJoinRoom) {
+    tabJoinRoom.addEventListener('click', () => {
+      switchLobbyTab('join');
+    });
+  }
+
+  if (tabCreateRoom) {
+    tabCreateRoom.addEventListener('click', () => {
+      switchLobbyTab('create');
+    });
+  }
+
+  if (inputRoomName && btnCreateRoom) {
+    inputRoomName.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        btnCreateRoom.click();
+      }
+    });
+  }
 
   btnCreateRoom.addEventListener('click', async () => {
     if (isActionBusy) return;
@@ -935,7 +986,7 @@
       lobbyRoomsList.innerHTML =
         '<div class="empty-lobby" role="status">' +
         '<p><strong>Chưa có bàn nào đang mở trong sảnh.</strong></p>' +
-        '<p>Hãy nhập tên bàn bên trái và bấm <strong>➕ Tạo Bàn</strong> để mở sảnh rủ anh em!</p>' +
+        '<p>Hãy chọn tab <strong>➕ Tạo bàn mới</strong> và bấm <strong>➕ Tạo Bàn</strong> để mở sảnh rủ anh em!</p>' +
         '</div>';
       return;
     }

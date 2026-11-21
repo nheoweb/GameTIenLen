@@ -11,6 +11,31 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $tlmn_is_fullscreen = isset( $tlmn_is_fullscreen ) ? (bool) $tlmn_is_fullscreen : true;
 $tlmn_root_class    = $tlmn_is_fullscreen ? 'tlmn-root tlmn-fullscreen-mode' : 'tlmn-root tlmn-embed-mode';
+$tlmn_game_enabled  = class_exists( 'TLMN_Plugin' ) ? TLMN_Plugin::is_game_enabled() : true;
+
+if ( ! $tlmn_game_enabled ) :
+	?>
+	<div id="tlmnAppRoot" class="<?php echo esc_attr( $tlmn_root_class ); ?>">
+		<div class="app-shell">
+			<section class="panel-card tlmn-disabled-panel" role="status">
+				<div class="tlmn-disabled-icon" aria-hidden="true">🔒</div>
+				<h1 class="tlmn-disabled-title">Sảnh Giải Trí Nội Bộ Đang Tạm Đóng</h1>
+				<p class="tlmn-disabled-desc">
+					Giao diện trò chơi hiện đang được Quản trị viên tạm khóa ngoài giờ giải lao nội bộ.
+				</p>
+				<?php if ( function_exists( 'current_user_can' ) && current_user_can( 'manage_options' ) ) : ?>
+					<div style="margin-top: 1.25rem;">
+						<a href="<?php echo esc_url( admin_url( 'admin.php?page=tien-len-mien-nam' ) ); ?>" class="btn btn-gold btn-sm">
+							⚙️ Vào trang Quản trị để Bật lại Sảnh Game
+						</a>
+					</div>
+				<?php endif; ?>
+			</section>
+		</div>
+	</div>
+	<?php
+	return;
+endif;
 ?>
 <div id="tlmnAppRoot" class="<?php echo esc_attr( $tlmn_root_class ); ?>">
 	<div class="app-shell">
@@ -31,11 +56,6 @@ $tlmn_root_class    = $tlmn_is_fullscreen ? 'tlmn-root tlmn-fullscreen-mode' : '
 				<button id="btnToggleSound" type="button" class="btn btn-outline btn-sm" aria-pressed="false">
 					🔊 Âm thanh: BẬT
 				</button>
-				<?php if ( $tlmn_is_fullscreen ) : ?>
-					<a href="<?php echo esc_url( home_url( '/' ) ); ?>" class="btn btn-outline btn-sm">
-						🏠 Trang chủ
-					</a>
-				<?php endif; ?>
 			</div>
 		</header>
 
@@ -63,35 +83,67 @@ $tlmn_root_class    = $tlmn_is_fullscreen ? 'tlmn-root tlmn-fullscreen-mode' : '
 
 				<hr class="divider" />
 
-				<div class="form-group">
-					<label for="inputRoomName">Tạo bàn mới</label>
-					<div class="input-row">
-						<input
-							id="inputRoomName"
-							type="text"
-							maxlength="30"
-							placeholder="Tên bàn (VD: Bàn Trưa Văn Phòng)"
-						/>
-						<button id="btnCreateRoom" type="button" class="btn btn-primary">
-							➕ Tạo Bàn
-						</button>
+				<!-- 2 Tab Horizontal: Tham gia bàn | Tạo bàn mới -->
+				<div class="lobby-action-tabs" role="tablist" aria-label="Chọn Tham gia hoặc Tạo bàn mới">
+					<button
+						id="tabJoinRoom"
+						type="button"
+						role="tab"
+						aria-selected="true"
+						aria-controls="panelJoinRoom"
+						class="lobby-tab-btn active"
+						data-tab="join"
+					>
+						🔑 Tham gia
+					</button>
+					<button
+						id="tabCreateRoom"
+						type="button"
+						role="tab"
+						aria-selected="false"
+						aria-controls="panelCreateRoom"
+						class="lobby-tab-btn"
+						data-tab="create"
+					>
+						➕ Tạo bàn mới
+					</button>
+				</div>
+
+				<!-- Nội dung Tab 1: Tham gia bằng mã phòng 4 số -->
+				<div id="panelJoinRoom" role="tabpanel" aria-labelledby="tabJoinRoom" class="lobby-tab-panel">
+					<div class="form-group">
+						<label for="inputRoomCode">Nhập Mã phòng 4 số</label>
+						<div class="input-row">
+							<input
+								id="inputRoomCode"
+								type="text"
+								maxlength="4"
+								inputmode="numeric"
+								pattern="[0-9]*"
+								placeholder="VD: 4821"
+							/>
+							<button id="btnJoinByCode" type="button" class="btn btn-primary">
+								🔑 Vào Bàn
+							</button>
+						</div>
 					</div>
 				</div>
 
-				<div class="form-group">
-					<label for="inputRoomCode">Hoặc nhập Mã phòng 4 số</label>
-					<div class="input-row">
-						<input
-							id="inputRoomCode"
-							type="text"
-							maxlength="4"
-							inputmode="numeric"
-							pattern="[0-9]*"
-							placeholder="VD: 4821"
-						/>
-						<button id="btnJoinByCode" type="button" class="btn btn-secondary">
-							🔑 Vào Bàn
-						</button>
+				<!-- Nội dung Tab 2: Tạo bàn mới -->
+				<div id="panelCreateRoom" role="tabpanel" aria-labelledby="tabCreateRoom" class="lobby-tab-panel hidden">
+					<div class="form-group">
+						<label for="inputRoomName">Tên bàn</label>
+						<div class="input-row">
+							<input
+								id="inputRoomName"
+								type="text"
+								maxlength="30"
+								placeholder="Tên bàn (VD: Bàn Trưa Văn Phòng)"
+							/>
+							<button id="btnCreateRoom" type="button" class="btn btn-primary">
+								➕ Tạo Bàn
+							</button>
+						</div>
 					</div>
 				</div>
 

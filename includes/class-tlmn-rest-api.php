@@ -147,6 +147,32 @@ class TLMN_Rest_Api {
 	}
 
 	/**
+	 * Kiểm tra sảnh game có đang được Admin bật hay không.
+	 *
+	 * @return bool
+	 */
+	private static function is_game_enabled() {
+		return ! class_exists( 'TLMN_Plugin' ) || TLMN_Plugin::is_game_enabled();
+	}
+
+	/**
+	 * Phản hồi chặn khi Admin đã tắt Sảnh Game.
+	 *
+	 * @return WP_REST_Response
+	 */
+	private static function disabled_response() {
+		return self::json_response(
+			array(
+				'ok'       => false,
+				'disabled' => true,
+				'deleted'  => true,
+				'error'    => '🔒 Sảnh game hiện đang được Quản trị viên tạm đóng.',
+			),
+			403
+		);
+	}
+
+	/**
 	 * Đọc body JSON hoặc tham số request.
 	 *
 	 * @param WP_REST_Request $request Request.
@@ -167,6 +193,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_lobby() {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$rooms = TLMN_Storage::get_all_rooms();
 		$list  = array();
 		foreach ( $rooms as $room ) {
@@ -188,6 +217,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_create_room( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$payload      = self::get_payload( $request );
 		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
 		$nickname     = isset( $payload['nickname'] ) ? trim( (string) $payload['nickname'] ) : '';
@@ -234,6 +266,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_join_room( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$payload      = self::get_payload( $request );
 		$room_id      = isset( $payload['roomId'] ) ? trim( (string) $payload['roomId'] ) : '';
 		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
@@ -300,6 +335,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_get_room( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$room_id        = (string) $request->get_param( 'room_id' );
 		$player_token   = TLMN_Room_Manager::sanitize_token( $request->get_param( 'token' ) );
 		$client_version = (int) $request->get_param( 'version' );
@@ -397,6 +435,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_ready( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$room_id      = (string) $request->get_param( 'room_id' );
 		$payload      = self::get_payload( $request );
 		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
@@ -436,6 +477,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_start( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$room_id      = (string) $request->get_param( 'room_id' );
 		$payload      = self::get_payload( $request );
 		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
@@ -480,6 +524,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_nudge( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$room_id      = (string) $request->get_param( 'room_id' );
 		$payload      = self::get_payload( $request );
 		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
@@ -556,6 +603,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_play( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$room_id      = (string) $request->get_param( 'room_id' );
 		$payload      = self::get_payload( $request );
 		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
@@ -594,6 +644,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_pass( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$room_id      = (string) $request->get_param( 'room_id' );
 		$payload      = self::get_payload( $request );
 		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );
@@ -631,6 +684,9 @@ class TLMN_Rest_Api {
 	 * @return WP_REST_Response
 	 */
 	public static function handle_chat( WP_REST_Request $request ) {
+		if ( ! self::is_game_enabled() ) {
+			return self::disabled_response();
+		}
 		$room_id      = (string) $request->get_param( 'room_id' );
 		$payload      = self::get_payload( $request );
 		$player_token = TLMN_Room_Manager::sanitize_token( isset( $payload['playerToken'] ) ? $payload['playerToken'] : '' );

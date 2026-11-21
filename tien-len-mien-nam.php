@@ -3,7 +3,7 @@
  * Plugin Name:       Tiến Lên Miền Nam Nội Bộ
  * Plugin URI:        https://wordpress.org/
  * Description:       Game bài Tiến Lên Miền Nam Online nội bộ (2–4 người chơi), chạy thuần PHP + MySQL + REST API ngay trên WordPress không cần server Node.js.
- * Version:           1.1.1
+ * Version:           1.2.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Game Tiến Lên Nội Bộ
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TLMN_VERSION', '1.1.1' );
+define( 'TLMN_VERSION', '1.2.0' );
 define( 'TLMN_DB_VERSION', '1.0.0' );
 define( 'TLMN_PLUGIN_FILE', __FILE__ );
 define( 'TLMN_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
@@ -31,8 +31,18 @@ require_once TLMN_PLUGIN_PATH . 'includes/class-tlmn-rest-api.php';
 
 class TLMN_Plugin {
 
-	const TEMPLATE_SLUG = 'tlmn-fullscreen';
-	const PAGE_OPTION   = 'tlmn_game_page_id';
+	const TEMPLATE_SLUG  = 'tlmn-fullscreen';
+	const PAGE_OPTION    = 'tlmn_game_page_id';
+	const ENABLED_OPTION = 'tlmn_game_enabled';
+
+	/**
+	 * Kiểm tra sảnh game có đang được Admin bật cho phép hiển thị hay không.
+	 *
+	 * @return bool
+	 */
+	public static function is_game_enabled() {
+		return '0' !== (string) get_option( self::ENABLED_OPTION, '1' );
+	}
 
 	/**
 	 * Khởi chạy toàn bộ hooks của plugin.
@@ -216,23 +226,25 @@ class TLMN_Plugin {
 			self::get_asset_version( 'assets/css/tien-len.css' )
 		);
 
-		wp_enqueue_script(
-			'tlmn-audio',
-			TLMN_PLUGIN_URL . 'assets/js/audio.js',
-			array(),
-			self::get_asset_version( 'assets/js/audio.js' ),
-			true
-		);
+		if ( self::is_game_enabled() ) {
+			wp_enqueue_script(
+				'tlmn-audio',
+				TLMN_PLUGIN_URL . 'assets/js/audio.js',
+				array(),
+				self::get_asset_version( 'assets/js/audio.js' ),
+				true
+			);
 
-		wp_enqueue_script(
-			'tlmn-app',
-			TLMN_PLUGIN_URL . 'assets/js/app.js',
-			array( 'tlmn-audio' ),
-			self::get_asset_version( 'assets/js/app.js' ),
-			true
-		);
+			wp_enqueue_script(
+				'tlmn-app',
+				TLMN_PLUGIN_URL . 'assets/js/app.js',
+				array( 'tlmn-audio' ),
+				self::get_asset_version( 'assets/js/app.js' ),
+				true
+			);
 
-		wp_localize_script( 'tlmn-app', 'TLMN_CONFIG', self::get_frontend_config() );
+			wp_localize_script( 'tlmn-app', 'TLMN_CONFIG', self::get_frontend_config() );
+		}
 
 		$tlmn_is_fullscreen = ( 'no' !== strtolower( trim( (string) $atts['fullscreen'] ) ) );
 
@@ -286,7 +298,14 @@ class TLMN_Plugin {
 		$notice = '';
 		if ( isset( $_POST['tlmn_action'] ) && check_admin_referer( 'tlmn_admin_nonce', 'tlmn_nonce' ) ) {
 			$action = sanitize_text_field( wp_unslash( $_POST['tlmn_action'] ) );
-			if ( 'cleanup_stale' === $action ) {
+			if ( 'enable_game' === $action ) {
+				update_option( self::ENABLED_OPTION, '1' );
+				$notice = '🟢 Đã BẬT mở lại giao diện Sảnh Game Tiến Lên Miền Nam!';
+			} elseif ( 'disable_game' === $action ) {
+				update_option( self::ENABLED_OPTION, '0' );
+				$deleted = TLMN_Storage::cleanup_stale_rooms( -1 );
+				$notice  = '🔴 Đã TẮT giao diện Sảnh Game và đóng toàn bộ ' . $deleted . ' bàn đang mở.';
+			} elseif ( 'cleanup_stale' === $action ) {
 				$deleted = TLMN_Storage::cleanup_stale_rooms();
 				$notice  = 'Đã dọn sạch ' . $deleted . ' phòng cũ không hoạt động quá 4 giờ.';
 			} elseif ( 'cleanup_all' === $action ) {
@@ -298,6 +317,7 @@ class TLMN_Plugin {
 			}
 		}
 
+		$is_enabled   = self::is_game_enabled();
 		$page_id      = (int) get_option( self::PAGE_OPTION, 0 );
 		$page_url     = ( $page_id > 0 && 'publish' === get_post_status( $page_id ) ) ? get_permalink( $page_id ) : '';
 		$active_rooms = TLMN_Storage::count_active_rooms();
@@ -309,8 +329,37 @@ class TLMN_Plugin {
 				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( $notice ); ?></p></div>
 			<?php endif; ?>
 
+			<div class="card" style="max-width: 720px; padding: 16px 20px; margin-top: 16px; border-left: 4px solid <?php echo $is_enabled ? '#22c55e' : '#ef4444'; ?>;">
+				<h2 style="margin-top: 0;">1. Công tắc Bật / Tắt hiển thị Sảnh Game (Kiểm soát của Admin)</h2>
+				<p>
+					Trạng thái hiện tại:
+					<?php if ( $is_enabled ) : ?>
+						<strong style="color: #15803d; background: #dcfce7; padding: 3px 10px; border-radius: 999px;">🟢 ĐANG BẬT (Cho phép hiển thị giao diện game)</strong>
+					<?php else : ?>
+						<strong style="color: #b91c1c; background: #fee2e2; padding: 3px 10px; border-radius: 999px;">🔴 ĐANG TẮT (Đã khóa giao diện &amp; đóng mọi bàn chơi)</strong>
+					<?php endif; ?>
+				</p>
+				<p style="color: #4b5563;">
+					Khi chuyển sang <strong>TẮT</strong>, toàn bộ giao diện bàn chơi và các cổng API sẽ bị khóa ngay lập tức (đồng thời hủy mọi bàn đang mở) để ngăn chặn người lạ tự ý truy cập hoặc lợi dụng chơi ngoài sự kiểm soát của Quản trị viên.
+				</p>
+				<form method="post" style="margin-top: 12px;">
+					<?php wp_nonce_field( 'tlmn_admin_nonce', 'tlmn_nonce' ); ?>
+					<?php if ( $is_enabled ) : ?>
+						<input type="hidden" name="tlmn_action" value="disable_game" />
+						<button type="submit" class="button" style="background: #dc2626; border-color: #b91c1c; color: #fff; font-weight: 600;" onclick="return confirm('Bạn có chắc muốn TẮT giao diện sảnh game và đóng toàn bộ các bàn đang chơi không?');">
+							🔒 Tắt Sảnh Game Ngay (Ẩn giao diện &amp; Khóa truy cập)
+						</button>
+					<?php else : ?>
+						<input type="hidden" name="tlmn_action" value="enable_game" />
+						<button type="submit" class="button button-primary" style="font-weight: 600;">
+							🔓 Bật Mở Lại Giao Diện Sảnh Game
+						</button>
+					<?php endif; ?>
+				</form>
+			</div>
+
 			<div class="card" style="max-width: 720px; padding: 16px 20px; margin-top: 16px;">
-				<h2 style="margin-top: 0;">1. Đường link vào chơi ngay</h2>
+				<h2 style="margin-top: 0;">2. Đường link vào chơi ngay</h2>
 				<?php if ( '' !== $page_url ) : ?>
 					<p>Trang chơi toàn màn hình đã sẵn sàng — bạn chỉ cần gửi đường link này cho nhóm bạn bè:</p>
 					<p>
@@ -332,7 +381,7 @@ class TLMN_Plugin {
 			</div>
 
 			<div class="card" style="max-width: 720px; padding: 16px 20px; margin-top: 16px;">
-				<h2 style="margin-top: 0;">2. Cách nhúng vào trang khác (Shortcode)</h2>
+				<h2 style="margin-top: 0;">3. Cách nhúng vào trang khác (Shortcode)</h2>
 				<ul style="list-style: disc; margin-left: 20px;">
 					<li><code>[tien_len_game]</code> — Tự động mở chế độ <strong>Toàn màn hình</strong> (không dính Header/Footer theme, khuyên dùng cho cả PC &amp; điện thoại).</li>
 					<li><code>[tien_len_game fullscreen="no"]</code> — Nhúng khung game trực tiếp bên trong giao diện bài viết hiện tại của theme.</li>
@@ -340,7 +389,7 @@ class TLMN_Plugin {
 			</div>
 
 			<div class="card" style="max-width: 720px; padding: 16px 20px; margin-top: 16px;">
-				<h2 style="margin-top: 0;">3. Trạng thái sảnh &amp; Bảo trì</h2>
+				<h2 style="margin-top: 0;">4. Trạng thái sảnh &amp; Bảo trì</h2>
 				<p>Số phòng hiện đang lưu trong cơ sở dữ liệu: <strong><?php echo esc_html( (string) $active_rooms ); ?></strong> phòng. <em>(Các phòng không tương tác quá 4 giờ sẽ tự động bị dọn.)</em></p>
 				<div style="display: flex; gap: 10px; flex-wrap: wrap;">
 					<form method="post">
