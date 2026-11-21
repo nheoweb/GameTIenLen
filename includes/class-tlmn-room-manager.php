@@ -192,6 +192,88 @@ class TLMN_Room_Manager {
 	}
 
 	/**
+	 * Dọn dẹp các ghế "bóng ma" (tab cũ đã đóng hoặc trùng tên do mở nhiều tab) khi bàn đang ở trạng thái Phòng chờ.
+	 *
+	 * @param array<string, mixed> $room Trạng thái phòng.
+	 * @return bool True nếu có ghế thừa bị dọn.
+	 */
+	public static function prune_waiting_ghost_players( array &$room ) {
+		if ( 'PLAYING' === $room['status'] || empty( $room['players'] ) || count( $room['players'] ) <= 1 ) {
+			return false;
+		}
+
+		$now          = time();
+		$host_token   = isset( $room['hostToken'] ) ? (string) $room['hostToken'] : '';
+		$by_nick      = array();
+		$keep_tokens  = array();
+		$removed_any  = false;
+
+		// 1. Nếu cùng 1 tên hiển thị (VD: "Dell") xuất hiện nhiều ghế do mở nhiều tab -> chỉ giữ lại 1 ghế mới nhất/đang online.
+		foreach ( $room['players'] as $p ) {
+			$nick_key = function_exists( 'mb_strtolower' )
+				? mb_strtolower( trim( (string) $p['nickname'] ), 'UTF-8' )
+				: strtolower( trim( (string) $p['nickname'] ) );
+			if ( ! isset( $by_nick[ $nick_key ] ) ) {
+				$by_nick[ $nick_key ] = array();
+			}
+			$by_nick[ $nick_key ][] = $p;
+		}
+
+		foreach ( $by_nick as $group ) {
+			if ( 1 === count( $group ) ) {
+				$keep_tokens[ $group[0]['playerToken'] ] = true;
+				continue;
+			}
+			// Ưu tiên giữ: Chủ phòng -> Đang online gần nhất -> Đã bấm Sẵn sàng.
+			usort(
+				$group,
+				function ( $a, $b ) use ( $host_token ) {
+					$a_host = ( $a['playerToken'] === $host_token ) ? 1 : 0;
+					$b_host = ( $b['playerToken'] === $host_token ) ? 1 : 0;
+					if ( $a_host !== $b_host ) {
+						return $b_host - $a_host;
+					}
+					$time_diff = (int) $b['lastSeenAt'] - (int) $a['lastSeenAt'];
+					if ( 0 !== $time_diff ) {
+						return $time_diff;
+					}
+					return ( ! empty( $b['ready'] ) ? 1 : 0 ) - ( ! empty( $a['ready'] ) ? 1 : 0 );
+				}
+			);
+			$keep_tokens[ $group[0]['playerToken'] ] = true;
+			$removed_any = true;
+		}
+
+		// 2. Loại bỏ các ghế trùng tên hoặc ghế khách đã đóng tab (mất kết nối đỏ > 35 giây trong phòng chờ).
+		$filtered = array();
+		foreach ( $room['players'] as $p ) {
+			$token   = $p['playerToken'];
+			$is_host = ( $token === $host_token );
+			if ( empty( $keep_tokens[ $token ] ) ) {
+				$removed_any = true;
+				continue;
+			}
+			if ( ! $is_host && ( $now - (int) $p['lastSeenAt'] ) > 35 ) {
+				$removed_any = true;
+				continue;
+			}
+			$filtered[] = $p;
+		}
+
+		if ( $removed_any && ! empty( $filtered ) ) {
+			$room['players'] = array_values( $filtered );
+			if ( 'COUNTDOWN' === $room['status'] && count( $room['players'] ) < 4 ) {
+				$room['status']         = 'WAITING';
+				$room['countdownEndAt'] = null;
+			}
+			self::bump_version( $room );
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
 	 * Cho người chơi vào phòng hoặc kết nối lại (F5).
 	 *
 	 * @param array<string, mixed> $room         Trạng thái phòng.
@@ -203,7 +285,9 @@ class TLMN_Room_Manager {
 		$now        = time();
 		$clean_name = self::sanitize_label( $nickname, 20, 'Người chơi' );
 
-		// 1. Reconnect nếu đã có ghế trong bàn.
+		self::prune_waiting_ghost_players( $room );
+
+		// 1. Reconnect nếu đã có ghế trong bàn (theo playerToken).
 		foreach ( $room['players'] as &$p ) {
 			if ( $p['playerToken'] === $player_token ) {
 				$was_offline     = ( $now - (int) $p['lastSeenAt'] ) > self::ONLINE_TIMEOUT_SECONDS;
@@ -223,6 +307,35 @@ class TLMN_Room_Manager {
 			}
 		}
 		unset( $p );
+
+		// 1b. Nếu đang ở phòng chờ (chưa chia bài) và người chơi mở lại link ở tab mới trên cùng máy (trùng Nickname) -> nhận lại đúng ghế đó, không tạo ghế trùng!
+		if ( 'PLAYING' !== $room['status'] ) {
+			$clean_lower = function_exists( 'mb_strtolower' )
+				? mb_strtolower( $clean_name, 'UTF-8' )
+				: strtolower( $clean_name );
+			foreach ( $room['players'] as &$p ) {
+				$p_lower = function_exists( 'mb_strtolower' )
+					? mb_strtolower( trim( (string) $p['nickname'] ), 'UTF-8' )
+					: strtolower( trim( (string) $p['nickname'] ) );
+				if ( $p_lower === $clean_lower ) {
+					$old_token        = $p['playerToken'];
+					$p['playerToken'] = $player_token;
+					$p['lastSeenAt']  = $now;
+					if ( $room['hostToken'] === $old_token ) {
+						$room['hostToken'] = $player_token;
+					}
+					self::bump_version( $room );
+					return array(
+						'ok'            => true,
+						'roomId'        => $room['roomId'],
+						'reconnected'   => true,
+						'role'          => 'PLAYER',
+						'joinAlertType' => 'RECONNECTED',
+					);
+				}
+			}
+			unset( $p );
+		}
 
 		// 2. Reconnect nếu đang là Khán giả.
 		foreach ( $room['spectators'] as &$s ) {
@@ -372,6 +485,8 @@ class TLMN_Room_Manager {
 				'error' => 'Bàn đang trong ván đấu',
 			);
 		}
+
+		self::prune_waiting_ghost_players( $room );
 
 		$found_idx = -1;
 		foreach ( $room['players'] as $idx => $p ) {
@@ -1316,8 +1431,9 @@ class TLMN_Room_Manager {
 	 * @return bool True nếu có thay đổi cần lưu DB.
 	 */
 	public static function touch_heartbeat( array &$room, $player_token, $min_interval = 5 ) {
+		$pruned = self::prune_waiting_ghost_players( $room );
 		if ( '' === $player_token ) {
-			return false;
+			return $pruned;
 		}
 		$now = time();
 
@@ -1332,7 +1448,7 @@ class TLMN_Room_Manager {
 					}
 					return true;
 				}
-				return false;
+				return $pruned;
 			}
 		}
 		unset( $p );
@@ -1348,12 +1464,12 @@ class TLMN_Room_Manager {
 					}
 					return true;
 				}
-				return false;
+				return $pruned;
 			}
 		}
 		unset( $s );
 
-		return false;
+		return $pruned;
 	}
 
 	/**

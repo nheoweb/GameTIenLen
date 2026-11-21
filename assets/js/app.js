@@ -10,13 +10,12 @@
   const POLL_ROOM_MS = Number(config.pollRoomMs) || 900;
   const POLL_LOBBY_MS = Number(config.pollLobbyMs) || 2500;
 
-  // Lưu playerToken trong sessionStorage để:
-  // 1) Bấm F5 tải lại trang vẫn giữ nguyên đúng ghế và bài trên tay
-  // 2) Mở 2-4 tab trên cùng 1 trình duyệt vẫn đóng vai được 2-4 người chơi độc lập
+  // Lưu playerToken trong localStorage (đồng bộ sessionStorage) để:
+  // 1) Bấm F5 tải lại trang hoặc bấm lại link mời mở sang tab mới trên cùng 1 máy vẫn giữ đúng 1 ghế duy nhất (không bị nhân bản thành nhiều ghế "Dell")
   function getOrCreatePlayerToken() {
     let token = '';
     try {
-      token = sessionStorage.getItem('tl_player_token') || '';
+      token = localStorage.getItem('tl_player_token') || sessionStorage.getItem('tl_player_token') || '';
     } catch (e) {
       token = '';
     }
@@ -30,11 +29,12 @@
         randPart = Math.random().toString(36).slice(2, 12);
       }
       token = 'p_' + randPart + '_' + Date.now().toString(36);
-      try {
-        sessionStorage.setItem('tl_player_token', token);
-      } catch (e) {
-        // Bỏ qua nếu storage bị chặn
-      }
+    }
+    try {
+      localStorage.setItem('tl_player_token', token);
+      sessionStorage.setItem('tl_player_token', token);
+    } catch (e) {
+      // Bỏ qua nếu storage bị chặn
     }
     return token;
   }
