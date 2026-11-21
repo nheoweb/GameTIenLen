@@ -146,14 +146,6 @@ endif;
 						</div>
 					</div>
 				</div>
-
-				<div class="share-info-box">
-					<div class="share-info-title">🔗 Link sảnh chơi gửi cho nhóm bạn:</div>
-					<div class="share-url-row">
-						<span id="shareLobbyUrlText" class="share-url-text"></span>
-						<button id="btnCopyLobbyUrl" type="button" class="btn btn-outline btn-sm">📋 Copy</button>
-					</div>
-				</div>
 			</section>
 
 			<!-- Cột phải: Danh sách bàn đang mở trực tiếp -->
@@ -168,6 +160,17 @@ endif;
 
 				<div id="lobbyRoomsList" class="rooms-grid" role="list">
 					<!-- Render động danh sách bàn -->
+				</div>
+			</section>
+
+			<!-- Dưới cùng: Link sảnh chơi gửi cho nhóm bạn -->
+			<section class="panel-card lobby-share-panel">
+				<div class="share-info-box">
+					<div class="share-info-title">🔗 Link sảnh chơi gửi cho nhóm bạn:</div>
+					<div class="share-url-row">
+						<span id="shareLobbyUrlText" class="share-url-text"></span>
+						<button id="btnCopyLobbyUrl" type="button" class="btn btn-outline btn-sm">📋 Copy</button>
+					</div>
 				</div>
 			</section>
 		</main>

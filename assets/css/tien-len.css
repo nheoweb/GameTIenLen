@@ -349,7 +349,20 @@ body.tlmn-fullscreen-page {
 }
 
 .tlmn-root .lobby-tab-panel {
-  margin-bottom: 0.25rem;
+  margin-bottom: 0;
+}
+
+.tlmn-root .lobby-tab-panel .form-group {
+  margin-bottom: 0;
+}
+
+.tlmn-root .lobby-share-panel {
+  grid-column: 1 / -1;
+  padding: 0.85rem 1rem;
+}
+
+.tlmn-root .lobby-share-panel .share-info-box {
+  margin-top: 0;
 }
 
 /* Màn hình thông báo khi Admin tạm khóa Sảnh Game */
